@@ -184,16 +184,22 @@ function search(groups, floats, locked, opts, budget, seed) {
   const classes = groups.map(g => {
     const n = g.lessons.length;
     const lastOrig = Math.max(...g.lessons.map(l => l.orig));
+    // E = where the class's movable lessons end when packed from period 1 with no gap, skipping the
+    // periods held by fixed lessons. Empty periods after E (before a fixed PE/art/vocational lesson) are
+    // not إشغال, so only periods 1..E must be filled.
+    const fixedPs = new Set(g.lessons.filter(l => l.fixed).map(l => l.orig));
+    let E = 0;
+    for (let k = 0, need = n - fixedPs.size; k < need;) { E++; if (!fixedPs.has(E)) k++; }
     const lessons = g.lessons.map(l => {
       if (l.fixed) return { ...l, ti: tid(l.t), lo: l.orig, hi: l.orig, p: 0, n, tail: false };
       // period 7 is only for the lessons that are already there: nothing new is pushed into it
-      let hi = l.orig === 7 ? (opts.prefix ? 7 : n) : (opts.prefix ? 6 : Math.min(n, 6));
+      let hi = l.orig === 7 ? 7 : (opts.prefix ? 6 : Math.min(E, 6));
       if (opts.firstHi && l.t === ANCHOR) hi = Math.min(hi, opts.firstHi);
       return { ...l, ti: tid(l.t), lo: 1, hi, p: 0, n: opts.prefix ? Math.max(n, 5) : n, tail: l.light && l.orig === lastOrig };
     });
     // a fixed lesson (PE/art in period 6 or 7) keeps its period, so the class day reaches at least that period
     const fixedEnd = Math.max(0, ...lessons.filter(l => l.fixed).map(l => l.orig));
-    return { c: g.c, n: Math.max(n, fixedEnd), lessons };
+    return { c: g.c, n: Math.max(E, fixedEnd), E, lessons };
   });
   for (const cl of classes) for (const l of cl.lessons) if (l.lo > l.hi) return null;
   const fl = floats.map(l => ({ ...l, ti: tid(l.t), p: 0 }));
@@ -255,7 +261,7 @@ function search(groups, floats, locked, opts, budget, seed) {
       const rem = cl.lessons.filter(l => !l.p).length;
       if (!rem) continue;
       if (rem > maxN - p + 1) return;
-      const mandatory = opts.prefix ? (p <= Math.min(cl.n, opts.prefix) || rem === maxN - p + 1) : cl.n >= p;
+      const mandatory = opts.prefix ? (p <= Math.min(cl.E, opts.prefix) || rem === maxN - p + 1) : cl.E >= p;
       const cands = cl.lessons.filter(l => !l.p && l.lo <= p && l.hi >= p);
       const must = cands.filter(l => l.hi === p);
       if (must.length > 1) return;
@@ -287,11 +293,103 @@ function search(groups, floats, locked, opts, budget, seed) {
   return { best, exhausted: !stop };
 }
 
+// Fill (class, period) slots, the slot with the fewest choices first: much faster than search() at
+// finding a day with no إشغال. Periods 1..K of every class must be filled (K = Infinity: the whole day, i.e. no
+// إشغال at all); the class's other lessons then go in the earliest free periods after that, so any إشغال is
+// pushed to the end of the day. Several candidate orders are tried in turn (one order can get stuck where
+// another finds a timetable at once). Returns {classes, floats}, {impossible: true} when the search proved
+// there is none, or null when time ran out.
+function fillSlots(groups, floats, locked, budget, anchorHi, K = Infinity, seed = 1) {
+  const anchorOk = (l, p) => l.t !== ANCHOR || !anchorHi || p <= anchorHi;
+  const until = Date.now() + budget;
+  const rng = mulberry(seed);
+  for (let attempt = 0; Date.now() < until; attempt++) {
+    const order = attempt === 0 ? 'plain' : attempt === 1 ? 'close' : 'random';
+    const slice = attempt < 2 ? 2500 : 5000;
+    const r = fillOnce(Math.min(until, Date.now() + slice), order);
+    if (r) return r;               // a timetable, or proof that there is none
+  }
+  return null;
+
+  function fillOnce(deadline, order) {
+    const busy = new Set(), classAt = new Set();
+    locked.forEach(l => { busy.add(l.t + '|' + l.orig); classAt.add(l.c + '|' + l.orig); });
+    const classes = groups.map(g => g.lessons.map(l => ({ ...l, p: l.fixed ? l.orig : 0, r: rng() })));
+    const movable = [], slots = [];
+    for (const ls of classes) {
+      ls.filter(l => l.fixed).forEach(l => { busy.add(l.t + '|' + l.orig); classAt.add(l.c + '|' + l.orig); });
+      const mine = ls.filter(l => !l.fixed);
+      movable.push(...mine);
+      const fixedPs = new Set(ls.filter(l => l.fixed).map(l => l.orig));
+      let E = 0;
+      for (let k = 0; k < mine.length;) { E++; if (!fixedPs.has(E)) k++; }
+      for (let p = 1; p <= Math.min(E, K); p++) if (!fixedPs.has(p)) slots.push({ c: ls[0].c, p, done: false });
+    }
+    const fl = floats.map(l => ({ ...l, p: 0 }));
+    let nodes = 0, out = false;
+    const sorter = sl => order === 'plain' ? null : order === 'close'
+      ? (a, b) => Math.abs(a.orig - sl.p) - Math.abs(b.orig - sl.p)
+      : (a, b) => a.r - b.r;
+    const cands = sl => {
+      const cs = movable.filter(l => l.c === sl.c && !l.p && !busy.has(l.t + '|' + sl.p) && (sl.p <= 6 || l.orig === 7) && anchorOk(l, sl.p));
+      const s = sorter(sl);
+      return s ? cs.sort(s) : cs;
+    };
+    const take = (l, q) => { busy.add(l.t + '|' + q); classAt.add(l.c + '|' + q); l.p = q; };
+    const give = (l, q) => { busy.delete(l.t + '|' + q); classAt.delete(l.c + '|' + q); l.p = 0; };
+    // the rest: each class's lessons not yet placed (only when K < the class's day), then the lower grades
+    let rest = null;
+    function placeRest(i) {
+      if (++nodes % 512 === 0 && Date.now() > deadline) { out = true; return false; }
+      if (i === rest.length) return true;
+      const l = rest[i];
+      const ps = [1, 2, 3, 4, 5, 6, 7].filter(q => q <= (l.orig === 7 ? 7 : 6) && anchorOk(l, q));
+      if (l.float) ps.sort((a, b) => Math.abs(a - l.orig) - Math.abs(b - l.orig));   // lower grades: near their own period
+      for (const q of ps) {
+        if (busy.has(l.t + '|' + q) || classAt.has(l.c + '|' + q)) continue;
+        take(l, q);
+        if (placeRest(i + 1)) return true;
+        give(l, q);
+        if (out) return false;
+      }
+      return false;
+    }
+    function go() {
+      if (++nodes % 512 === 0 && Date.now() > deadline) { out = true; return false; }
+      let best = null, bc = null;
+      for (const sl of slots) {
+        if (sl.done) continue;
+        const cs = cands(sl);
+        if (!best || cs.length < bc.length) { best = sl; bc = cs; if (!cs.length) return false; }
+      }
+      if (!best) {
+        rest = movable.filter(l => !l.p).concat(fl);
+        // slot-filled classes have their lessons in periods 1..K already marked in classAt
+        classes.forEach(ls => ls.forEach(l => { if (l.p && !l.fixed) classAt.add(l.c + '|' + l.p); }));
+        const ok = placeRest(0);
+        if (!ok) classes.forEach(ls => ls.forEach(l => { if (l.p && !l.fixed) classAt.delete(l.c + '|' + l.p); }));
+        return ok;
+      }
+      best.done = true;
+      for (const l of bc) {
+        busy.add(l.t + '|' + best.p); l.p = best.p;
+        if (go()) return true;
+        busy.delete(l.t + '|' + best.p); l.p = 0;
+        if (out) break;
+      }
+      best.done = false;
+      return false;
+    }
+    if (go()) return { classes, floats: fl };
+    return out ? null : { impossible: true };
+  }
+}
+
 function solveDay(data, day, absent) {
   const all = dayLessons(data, day);
   const full = fullClasses(all);
-  // period-7 lessons (PE, art, vocational) and PE/art in period 6 never move; only احمد's lessons may move
-  all.forEach(l => { l.fixed = l.t !== MOVABLE && (l.orig === 7 || (l.light && l.orig === 6)); });
+  // PE and art in periods 6 and 7 never move (only احمد's may); vocational (مهني) may move, even from period 7
+  all.forEach(l => { l.fixed = l.t !== MOVABLE && l.light && l.orig >= 6; });
   const present = all.filter(l => !absent.has(l.t));
   const cancelled = all.filter(l => absent.has(l.t));
   const finish = (placed, extra) => {
@@ -318,26 +416,39 @@ function solveDay(data, day, absent) {
     return finish(placed, extra);
   };
 
-  // Anchor one row first (periods 1..n back to back) to cut the search space; lifted if it blocks every arrangement.
+  // جهاد's lessons always run back to back from period 1 (his rule, 2026-10-25): every step below keeps that;
+  // only if nothing at all can be built with it is it lifted.
   const firstN = present.filter(l => l.t === ANCHOR).length;
-  for (const firstHi of firstN ? [firstN, 0] : [0]) {
-    const o = firstHi ? { firstHi } : {};
-    // 1) perfect: everything kept, nothing pushed into period 7.
-    let r = search(groups, floats, locked, { ...o, allow7: false }, 1500, seed);
+  const attempt = aHi => {
+    const o = aHi ? { firstHi: aHi } : {};
+    // There is never an إشغال when it can be avoided (the school's rule):
+    // 1) every lesson kept, as close to its own period as possible, no empty period in the middle of a class day;
+    let r = search(groups, floats, locked, { ...o, allow7: false }, 800, seed);
     if (r?.best) return collect(r.best, {});
-    // 2) still perfect, but a lesson may move into period 7.
-    r = search(groups, floats, locked, { ...o, allow7: true }, 600, seed + 1);
-    if (r?.best) return collect(r.best, { allow7: true });
-    // 3) a full day without free periods is impossible today: keep every lesson, make the
-    //    first 4 periods perfect (then 3, 2...) and fit the rest after them.
-    for (let k = 4; k >= 1; k--) {
-      r = search(groups, floats, locked, { ...o, allow7: true, prefix: k }, 700, seed + 10 + k);
-      if (r?.best) return collect(r.best, { prefix: k });
+    // 2) the same, rearranging the whole day if that is what it takes (may take minutes);
+    const z = fillSlots(groups, floats, locked, 240000, aHi, Infinity, seed);
+    if (z && !z.impossible) return collect(z, {});
+    // 3) impossible with this many absences. No lesson is ever dropped. Several timetables are built (first
+    //    5, 4, 3... periods full for every class, plus the older search) and the best one wins: the fewest
+    //    إشغال, and when that ties, the إشغال latest in the day.
+    const cands = [];
+    for (let k = 5; k >= 1; k--) {
+      const zk = fillSlots(groups, floats, locked, 20000, aHi, k, seed + k);
+      if (zk && !zk.impossible) cands.push(collect(zk, { prefix: k }));
     }
-    // 4) not even that is possible (e.g. more classes than teachers left): fewest free periods, as late as possible.
-    r = search(groups, floats, locked, { ...o, allow7: true, prefix: 7, soft: true }, 1500, seed + 20);
-    if (r?.best) return collect(r.best, { short: true });
-  }
+    for (let k = 4; k >= 1; k--) {
+      r = search(groups, floats, locked, { ...o, prefix: k }, 2000, seed + 10 + k);
+      if (r?.best) cands.push(collect(r.best, { prefix: k }));
+    }
+    r = search(groups, floats, locked, { ...o, prefix: 7, soft: true }, 4000, seed + 20);
+    if (r?.best) cands.push(collect(r.best, { short: true }));
+    const late = x => [...new Set(x.placed.map(y => y.c))].reduce((s2, c) => s2 + gapPeriods(x, c).reduce((a2, b2) => a2 + b2, 0), 0);
+    cands.sort((x, y) => x.problems.length - y.problems.length || x.gaps - y.gaps || late(y) - late(x));
+    if (cands.length) return cands[0];
+    return null;
+  };
+  const res = attempt(firstN) || (firstN ? attempt(0) : null);
+  if (res) return res;
   return finish(present.map(l => ({ ...l, p: l.orig })), { failed: true });
 }
 
@@ -406,12 +517,30 @@ function toast(msg) {
   setTimeout(() => el.remove(), 2600);
 }
 
+// The arrangement runs in a background worker so the page stays responsive while it searches (up to ~5 min).
+let solverWorker = null, startedAt = 0, ticker = null;
+function newWorker() {
+  try {
+    const src = document.getElementById('app-main').textContent.split('if (typeof module')[0];
+    const code = src + ';\nonmessage = e => postMessage(solveDay(e.data.data, e.data.day, new Set(e.data.absent)));';
+    return new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' })));
+  } catch (e) { return null; }
+}
 function run() {
-  busy = true; render();
-  setTimeout(() => {
-    result = solveDay(DATA, ui.day, new Set(ui.absent));
-    busy = false; render();
-  }, 30);
+  if (solverWorker) { solverWorker.terminate(); solverWorker = null; }   // a newer request replaces the old one
+  clearInterval(ticker);
+  busy = true; startedAt = Date.now(); render();
+  ticker = setInterval(() => {
+    const el = document.getElementById('elapsed');
+    if (el) el.textContent = AR(Math.round((Date.now() - startedAt) / 1000));
+  }, 1000);
+  const done = res => { clearInterval(ticker); solverWorker = null; result = res; busy = false; render(); };
+  const w = newWorker();
+  if (!w) { setTimeout(() => done(solveDay(DATA, ui.day, new Set(ui.absent))), 30); return; }
+  solverWorker = w;
+  w.onmessage = e => { if (solverWorker === w) { w.terminate(); done(e.data); } };
+  w.onerror = () => { if (solverWorker === w) { w.terminate(); done(solveDay(DATA, ui.day, new Set(ui.absent))); } };
+  w.postMessage({ data: { teachers: DATA.teachers, grid: DATA.grid }, day: ui.day, absent: ui.absent });
 }
 
 function cellHTML(x, opts) {
@@ -487,7 +616,7 @@ async function drawImage(r, mode) {
     : dayTeachers();
   const L = Math.max(r.L, 1);
   const S = 2, nameW = 150, colW = 128, rowH = 74, headH = 54, top = 118, pad = 28;
-  const free = freeList(r);
+  const free = [];   // the free-teachers list stays on the site only, never in the shared image
   const W = pad * 2 + nameW + colW * L, H = top + headH + rowH * rows.length + pad + (free.length ? 56 + 34 * free.length : 0);
   const cv = document.createElement('canvas');
   cv.width = W * S; cv.height = H * S;
@@ -590,7 +719,7 @@ async function copyShare() {
 }
 
 function resultsHTML() {
-  if (busy) return `<div class="panel"><p><span class="spin"></span> عم رتّب الجدول…</p></div>`;
+  if (busy) return `<div class="panel"><p><span class="spin"></span> عم دوّر على أفضل ترتيب بدون إشغال… <b id="elapsed" class="num">٠</b> ثانية. إذا الغياب كثير ممكن ياخذ لحد ٥ دقايق، خلّي الصفحة مفتوحة.</p></div>`;
   if (!result) return '';
   const r = result;
   const ok = r.problems.length === 0;
