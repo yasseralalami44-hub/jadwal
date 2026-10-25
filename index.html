@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0d1a17">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>جدول التعويض</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lalezar&family=IBM+Plex+Sans+Arabic:wght@400;500;700&display=swap">
+<style id="app-style">
+/* Layout: chalkboard control deck on top, live timetable grids below, one column on phones */
+:root{
+  --bg:#eef3f1; --surface:#ffffff; --surface-2:#e3ebe8; --line:#c9d6d1;
+  --fg:#11221d; --muted:#587069; --accent:#c4861a; --accent-ink:#ffffff;
+  --absent:#d2452f; --absent-soft:#fbe3de; --ok:#178a63; --ok-soft:#dcf3ea;
+  --moved:#2f6fd6; --moved-soft:#e1ebfb; --light:#7a4fc9; --light-soft:#ece4fa;
+  --display:"Lalezar","IBM Plex Sans Arabic",system-ui,sans-serif;
+  --body:"IBM Plex Sans Arabic",system-ui,"Segoe UI",Tahoma,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0d1a17; --surface:#132622; --surface-2:#1b322d; --line:#29453e;
+  --fg:#e7f0ec; --muted:#8ea89f; --accent:#f3c14b; --accent-ink:#1a1405;
+  --absent:#ff6e57; --absent-soft:#3a1d18; --ok:#46d19f; --ok-soft:#123528;
+  --moved:#7fb0ff; --moved-soft:#17284a; --light:#c3a2ff; --light-soft:#2a1f45; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0d1a17; --surface:#132622; --surface-2:#1b322d; --line:#29453e;
+  --fg:#e7f0ec; --muted:#8ea89f; --accent:#f3c14b; --accent-ink:#1a1405;
+  --absent:#ff6e57; --absent-soft:#3a1d18; --ok:#46d19f; --ok-soft:#123528;
+  --moved:#7fb0ff; --moved-soft:#17284a; --light:#c3a2ff; --light-soft:#2a1f45; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.55}
+#app{direction:rtl;max-width:1180px;margin:0 auto;padding-block:20px 48px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:grid;gap:18px}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.num{font-variant-numeric:tabular-nums}
+
+header.top{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px}
+header.top h1{font-family:var(--display);font-weight:400;font-size:clamp(2rem,6vw,3.1rem);line-height:1;margin:0;letter-spacing:0;text-wrap:balance}
+header.top h1 em{font-style:normal;color:var(--accent)}
+header.top p{margin:6px 0 0;color:var(--muted);max-width:62ch}
+.tabs{display:flex;gap:4px;background:var(--surface-2);padding:4px;border-radius:10px}
+.tabs button{border:0;background:transparent;padding:7px 14px;border-radius:7px;font-weight:500;color:var(--muted)}
+.tabs button[aria-pressed="true"]{background:var(--surface);color:var(--fg);box-shadow:0 1px 2px rgb(0 0 0/.12)}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;gap:14px;min-width:0}
+.label{font-size:.78rem;font-weight:700;letter-spacing:.04em;color:var(--muted)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.days button,.len button{border:1px solid var(--line);background:var(--surface);padding:7px 14px;border-radius:999px;font-weight:500}
+.days button[aria-pressed="true"],.len button[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.chips{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:8px}
+.chip{border:1.5px solid var(--line);background:var(--surface);border-radius:10px;padding:9px 10px;text-align:start;display:grid;gap:1px;position:relative}
+.chip b{font-size:1.02rem}
+.chip small{color:var(--muted);font-size:.74rem}
+.chip[aria-pressed="true"]{border-color:var(--absent);background:var(--absent-soft)}
+.chip[aria-pressed="true"] b{text-decoration:line-through;text-decoration-color:var(--absent);text-decoration-thickness:2px}
+.chip[aria-pressed="true"]::after{content:"غائب";position:absolute;top:8px;left:8px;font-size:.68rem;font-weight:700;color:var(--absent)}
+.chip:disabled{opacity:.45;cursor:default}
+.rule{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:.88rem}
+.rule input{accent-color:var(--accent);width:18px;height:18px}
+.go{border:0;background:var(--accent);color:var(--accent-ink);font-family:var(--display);font-size:1.35rem;padding:10px 26px;border-radius:12px;line-height:1.2}
+.go:disabled{opacity:.6}
+.ghost{border:1px solid var(--line);background:var(--surface);padding:7px 14px;border-radius:10px;font-weight:500}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.stat .v{font-family:var(--display);font-size:2rem;line-height:1.1}
+.stat .k{color:var(--muted);font-size:.82rem}
+.stat.good{background:var(--ok-soft);border-color:transparent}
+.stat.good .v{color:var(--ok)}
+.stat.bad{background:var(--absent-soft);border-color:transparent}
+.stat.bad .v{color:var(--absent)}
+.verdict{display:flex;gap:10px;align-items:center;padding:10px 14px;border-radius:10px;background:var(--ok-soft);color:var(--ok);font-weight:700}
+.verdict.fail{background:var(--absent-soft);color:var(--absent)}
+
+.scroller{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+table.tt{border-collapse:collapse;width:100%;min-width:640px}
+.tt th,.tt td{border-bottom:1px solid var(--line);border-inline-start:1px solid var(--line);padding:6px;text-align:center;vertical-align:middle}
+.tt thead th{background:var(--surface-2);font-size:.82rem;color:var(--muted);font-weight:700;position:sticky;top:0}
+.tt thead th .pn{display:block;font-family:var(--display);font-size:1.3rem;color:var(--fg);font-weight:400;line-height:1.1}
+.tt tbody th{text-align:start;font-weight:700;white-space:nowrap;background:var(--surface);position:sticky;right:0;z-index:1;min-width:84px}
+.tt tr.off th{color:var(--absent)}
+.tt tr.off td{background:repeating-linear-gradient(-45deg,transparent 0 6px,var(--absent-soft) 6px 12px)}
+.cell{display:grid;gap:0;justify-items:center;min-width:58px}
+.cell .c{font-weight:700;font-size:1rem}
+.cell .s{font-size:.72rem;color:var(--muted)}
+td.lt .c{color:var(--light)}
+td.gap{background:var(--absent-soft);color:var(--absent);font-weight:700;font-size:.8rem}
+.go.small{font-size:1.1rem;padding:8px 18px}
+.share-back{position:fixed;inset:0;background:rgb(0 0 0/.55);z-index:30;display:grid;place-items:center;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));direction:rtl}
+.share-back[hidden]{display:none}
+.share-box{background:var(--surface);border-radius:14px;padding:14px;display:grid;gap:12px;max-width:min(920px,100%);max-height:100%;overflow:auto}
+.share-box img{width:100%;border:1px solid var(--line);border-radius:8px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;color:var(--muted);font-size:.8rem}
+.legend span::before{content:"";display:inline-block;width:11px;height:11px;border-radius:3px;margin-inline-end:6px;vertical-align:-1px;background:var(--c)}
+
+.changes{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.tcard{border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--surface);display:grid;gap:6px;align-content:start}
+.tcard h3{margin:0;font-size:1.05rem;display:flex;justify-content:space-between;gap:8px}
+.tcard h3 small{color:var(--muted);font-weight:500;font-size:.78rem}
+.tcard ul{margin:0;padding:0;list-style:none;display:grid;gap:3px;font-size:.9rem}
+.tcard li{display:flex;justify-content:space-between;gap:8px}
+.tcard .arrow{color:var(--moved);font-weight:700}
+.tcard.cancel{border-color:var(--absent)}
+.muted{color:var(--muted)}
+.note{font-size:.85rem;color:var(--muted);margin:0;max-width:75ch}
+
+.editgrid input{width:100%;min-width:76px;border:1px solid transparent;background:transparent;border-radius:6px;padding:5px 4px;text-align:center;font-size:.86rem}
+.editgrid input:hover{border-color:var(--line)}
+.editgrid input:focus{border-color:var(--accent);background:var(--surface-2)}
+.editgrid td.clash{background:var(--absent-soft)}
+.editgrid td{padding:2px}
+.toast{position:fixed;bottom:calc(16px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 18px;border-radius:10px;font-weight:500;z-index:20;direction:rtl}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.spin{animation:none}}
+@media (max-width:520px){.go{width:100%}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="application/json" id="tt-data">{"teachers":["فؤاد","عادل","اسامه","حسان","كمال","شادي","اشرف","علي","حسن","جهاد","زياد","معتز","احمد"],"grid":{"فؤاد":[["4د:عربي","5ه:عربي","5أ:دين","4د:عربي","5ب:عربي","5ه:عربي",""],["4د:عربي","5ب:عربي","5ه:عربي","","4د:عربي","5ب:عربي",""],["5أ:دين","5ه:عربي","","5ب:عربي","4د:عربي","5ه:عربي",""],["5ب:عربي","5أ:دين","","5ه:عربي","4د:عربي","4د:عربي",""],["5ب:عربي","4د:عربي","5ه:عربي","","4د:عربي","5ب:عربي",""]],"عادل":[["5د:دين","5ج:دين","4ب:دين","","5ه:دين","4د:دين","4أ:فن"],["5ج:دين","4أ:دين","5ب:دين","4ج:دين","","",""],["","4د:دين","4أ:دين","5ج:دين","5ب:دين","4ب:دين",""],["4ب:دين","5ه:دين","4ج:دين","","4أ:دين","5د:دين",""],["4د:دين","","5ب:دين","5ه:دين","5د:دين","4ج:دين",""]],"اسامه":[["4ب:عربي","5أ:عربي","4أ:عربي","4ب:عربي","5أ:عربي","4أ:عربي",""],["","4ب:عربي","5أ:عربي","","4أ:عربي","4ب:عربي",""],["4ب:عربي","4أ:عربي","4ب:عربي","5أ:عربي","4أ:عربي","",""],["4أ:عربي","4ب:عربي","5أ:عربي","4ب:عربي","","4أ:عربي",""],["5أ:عربي","4ب:عربي","4أ:عربي","4أ:عربي","5أ:عربي","",""]],"حسان":[["5ج:عربي","4ج:عربي","","5د:عربي","4ج:عربي","","5أ:مهني"],["5أ:مهني","4ج:عربي","5ج:عربي","5د:عربي","4ج:عربي","5ج:عربي",""],["5ج:عربي","5د:عربي","4ج:عربي","","4ج:عربي","5د:عربي",""],["5د:عربي","","5ج:عربي","4ج:عربي","","5ج:عربي",""],["5د:عربي","4ج:عربي","5ج:عربي","5د:عربي","4ج:عربي","",""]],"كمال":[["5أ:E","5د:E","5ه:E","5أ:اجتماع","","5ج:E","5ج:مهني"],["5د:E","5ه:E","","5أ:E","5ج:E","",""],["5ه:E","5ج:E","5أ:E","5د:E","","5أ:اجتماع",""],["5ج:مهني","5ج:E","5ه:E","5أ:اجتماع","5د:E","5أ:E",""],["5ج:E","5د:E","","","5ه:E","5أ:E",""]],"شادي":[["4أ:E","4ب:E","4ج:E","","4د:E","5ب:E",""],["4أ:E","5د:مهني","4ب:E","5ب:E","5ه:مهني","4د:E",""],["","5ب:E","","4د:E","4ب:E","4ج:E",""],["4ج:E","4أ:E","5د:مهني","5ب:E","4ب:E","",""],["4أ:E","5ب:E","4د:E","4ج:E","","5ه:مهني",""]],"اشرف":[["","","","5ب:اجتماع","","5د:اجتماع","4ب:مهني"],["3ج:E","3أ:E","3ب:E","3د:E","","5د:اجتماع",""],["3أ:E","3ج:E","5د:اجتماع","3ب:E","3د:E","","4ب:فن"],["3د:E","5ب:اجتماع","3أ:E","3ج:E","3ب:E","5ب:اجتماع",""],["3ب:E","3د:E","3ج:E","","3أ:E","4ب:مهني",""]],"علي":[["1ب:E","2ب:E","1ج:E","2أ:E","1أ:E","","4د:مهني"],["2أ:E","1ج:E","1ب:E","1أ:E","2ج:E","",""],["1أ:E","2ب:E","1ج:E","2ج:E","1ب:E","",""],["2ج:E","2أ:E","2ب:E","1ب:E","1ج:E","",""],["2أ:E","2ج:E","1أ:E","","2ب:E","4د:مهني",""]],"حسن":[["5ه:رياضيات","","5ب:رياضيات","5ج:رياضيات","5د:رياضيات","5أ:رياضيات",""],["5ب:رياضيات","5ج:رياضيات","","5ه:رياضيات","5د:رياضيات","5أ:رياضيات",""],["5د:رياضيات","","5ب:رياضيات","5ه:رياضيات","5أ:رياضيات","5ج:رياضيات",""],["5ه:رياضيات","5د:رياضيات","5ب:رياضيات","5ج:رياضيات","5أ:رياضيات","",""],["","5ه:رياضيات","5أ:رياضيات","5ب:رياضيات","5ج:رياضيات","5د:رياضيات",""]],"جهاد":[["4ج:رياضيات","4د:رياضيات","","4أ:رياضيات","4أ:اجتماع","4ب:رياضيات",""],["4ج:رياضيات","","4أ:رياضيات","4د:رياضيات","4ب:رياضيات","4أ:اجتماع",""],["4ج:رياضيات","4ب:رياضيات","","4أ:رياضيات","5ج:اجتماع","4د:رياضيات",""],["","4د:رياضيات","4ب:رياضيات","4أ:رياضيات","5ج:اجتماع","4ج:رياضيات",""],["4ج:رياضيات","4أ:رياضيات","","4د:رياضيات","4ب:رياضيات","5ج:اجتماع",""]],"زياد":[["5ب:مهني","5ب:علوم","5د:علوم","5ه:علوم","5ج:علوم","",""],["5ه:علوم","5أ:علوم","5د:علوم","5ج:علوم","5ب:علوم","","5ب:فن"],["5ب:مهني","5أ:علوم","5ج:علوم","","5ه:علوم","","5أ:فن"],["5أ:علوم","","","5د:علوم","5ب:علوم","5ه:علوم","5ج:فن"],["","5ج:علوم","5د:علوم","5أ:علوم","5ب:علوم","",""]],"معتز":[["","4أ:مهني","4د:علوم","4ج:علوم","4ب:علوم","","4ج:فن"],["4ب:علوم","","4د:علوم","4أ:علوم","","5ه:اجتماع","4د:فن"],["4أ:مهني","4ج:علوم","4د:علوم","4ب:علوم","","4أ:علوم","5د:فن"],["","4ج:علوم","4أ:علوم","4د:علوم","5ه:اجتماع","",""],["5ه:اجتماع","","4ج:علوم","4ب:علوم","4أ:علوم","","5ه:فن"]],"احمد":[["","","5ج:رياضة","","","4ج:مهني","5ب:رياضة"],["","4د:اجتماع","4ج:اجتماع","4ب:رياضة","5أ:رياضة","4ج:رياضة","4أ:رياضة"],["4د:رياضة","","5ه:رياضة","4ج:مهني","5د:رياضة","5ب:رياضة","4ج:رياضة"],["4د:رياضة","","4د:اجتماع","","4ج:اجتماع","4ب:اجتماع","5ه:رياضة"],["4ب:رياضة","5أ:رياضة","4ب:اجتماع","5ج:رياضة","","4أ:رياضة","5د:رياضة"]]},"rev":1}</script>
+<script id="app-main">
+const LIGHT = new Set(['رياضة', 'فن']);
+const ANCHOR = String.fromCharCode(1580, 1607, 1575, 1583);
+
+function mulberry(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function parseCell(cell) {
+  const i = cell.indexOf(':');
+  return i < 0 ? { c: cell.trim(), s: '' } : { c: cell.slice(0, i).trim(), s: cell.slice(i + 1).trim() };
+}
+
+function dayLessons(data, day) {
+  const out = [];
+  for (const t of data.teachers) {
+    (data.grid[t]?.[day] || []).forEach((cell, i) => {
+      if (!cell) return;
+      const { c, s } = parseCell(cell);
+      if (c) out.push({ t, c, s, orig: i + 1, light: LIGHT.has(s) });
+    });
+  }
+  return out;
+}
+
+// Classes whose whole day is in this timetable (periods 1..n, no gap): grades 4 and 5.
+function fullClasses(all) {
+  const per = new Map();
+  for (const l of all) { if (!per.has(l.c)) per.set(l.c, []); per.get(l.c).push(l.orig); }
+  const full = new Set();
+  for (const [c, ps] of per) {
+    ps.sort((a, b) => a - b);
+    if (ps.length >= 3 && ps.every((p, i) => p === i + 1)) full.add(c);
+  }
+  return full;
+}
+
+// PE or art that closed the class day should still close it (strong preference, not a hard rule:
+// forcing it often makes a day without free periods impossible).
+function lessonCost(l, p) {
+  return Math.abs(p - l.orig) * (l.float ? 3 : 1) + (l.t === ANCHOR ? (p - 1) * 20 : 0) +
+    (l.tail && p !== l.n ? 150 : 0);
+}
+
+// Exact search, period by period. Every grade 4/5 class runs periods 1..n with no free period,
+// no teacher is in two places, and (unless allowed)
+// nothing is pushed into period 7. Keeps the cheapest arrangement found within the time budget.
+function search(groups, floats, locked, opts, budget, seed) {
+  const rng = mulberry(seed);
+  const tIdx = new Map();
+  const tid = t => { if (!tIdx.has(t)) tIdx.set(t, tIdx.size); return tIdx.get(t); };
+  const classes = groups.map(g => {
+    const n = g.lessons.length;
+    const lastOrig = Math.max(...g.lessons.map(l => l.orig));
+    const lessons = g.lessons.map(l => {
+      let hi = opts.prefix ? 7 : !opts.allow7 && l.orig !== 7 ? Math.min(n, 6) : n;
+      if (opts.firstHi && l.t === ANCHOR) hi = Math.min(hi, opts.firstHi);
+      return { ...l, ti: tid(l.t), lo: 1, hi, p: 0, n: opts.prefix ? Math.max(n, 5) : n, tail: l.light && l.orig === lastOrig };
+    });
+    return { c: g.c, n, lessons };
+  });
+  for (const cl of classes) for (const l of cl.lessons) if (l.lo > l.hi) return null;
+  const fl = floats.map(l => ({ ...l, ti: tid(l.t), p: 0 }));
+  locked.forEach(l => tid(l.t));
+  const lockedByClass = new Map();
+  locked.forEach(l => { if (!lockedByClass.has(l.c)) lockedByClass.set(l.c, new Set()); lockedByClass.get(l.c).add(l.orig); });
+  // prefix mode: only periods 1..prefix must be free of gaps; later lessons fill periods up to 7.
+  const maxN = opts.prefix ? 7 : Math.max(0, ...classes.map(c => c.n));
+  const nT = tIdx.size;
+  const busy = new Uint8Array(nT * 8);
+  locked.forEach(l => { busy[tid(l.t) * 8 + l.orig] = 1; });
+  const flHi = l => (opts.allow7 || l.orig === 7 ? 7 : 6);
+  const freeIn = (ti, a, b) => { let n = 0; for (let q = a; q <= b; q++) if (!busy[ti * 8 + q]) n++; return n; };
+
+  let best = null, bestCost = Infinity, nodes = 0, stop = false;
+  const deadline = Date.now() + budget;
+
+  // Each teacher must still have enough free periods for the lessons they have left.
+  function hallOk(p) {
+    for (let ti = 0; ti < nT; ti++) {
+      const h = [];
+      for (const cl of classes) for (const l of cl.lessons) if (!l.p && l.ti === ti) h.push(l.hi);
+      const nf = fl.filter(l => l.ti === ti).length;
+      h.sort((a, b) => a - b);
+      for (let j = 0; j < h.length; j++) if (j + 1 > freeIn(ti, p + 1, h[j])) return false;
+      if (nf && h.length + nf > freeIn(ti, p + 1, 7) + freeIn(ti, 1, p)) return false;
+    }
+    return true;
+  }
+
+  function placeFloats(i, cost) {
+    if (i === fl.length) {
+      if (cost < bestCost) {
+        bestCost = cost;
+        best = { classes: classes.map(cl => cl.lessons.map(l => ({ ...l }))), floats: fl.map(l => ({ ...l })) };
+      }
+      return;
+    }
+    const l = fl[i];
+    const cands = [1, 2, 3, 4, 5, 6, 7].filter(q => q <= flHi(l))
+      .sort((a, b) => Math.abs(a - l.orig) - Math.abs(b - l.orig));
+    for (const q of cands) {
+      if (busy[l.ti * 8 + q]) continue;
+      if (lockedByClass.get(l.c)?.has(q)) continue;
+      if (fl.some(o => o !== l && o.c === l.c && o.p === q)) continue;
+      const c2 = cost + lessonCost(l, q);
+      if (c2 >= bestCost) continue;
+      busy[l.ti * 8 + q] = 1; l.p = q;
+      placeFloats(i + 1, c2);
+      busy[l.ti * 8 + q] = 0; l.p = 0;
+    }
+  }
+
+  function period(p, cost) {
+    if (stop) return;
+    if (p > maxN) { placeFloats(0, cost); return; }
+    const opts2 = [];
+    for (const cl of classes) {
+      const rem = cl.lessons.filter(l => !l.p).length;
+      if (!rem) continue;
+      if (rem > maxN - p + 1) return;
+      const mandatory = opts.prefix ? (p <= Math.min(cl.n, opts.prefix) || rem === maxN - p + 1) : cl.n >= p;
+      const cands = cl.lessons.filter(l => !l.p && l.lo <= p && l.hi >= p);
+      const must = cands.filter(l => l.hi === p);
+      if (must.length > 1) return;
+      if (must.length) opts2.push(must);
+      else if (mandatory && !opts.soft) { if (!cands.length) return; opts2.push(cands); }
+      else opts2.push([...cands, mandatory ? 'early' : null]);
+    }
+    opts2.sort((a, b) => a.length - b.length);
+    function pick(i, c) {
+      if (stop) return;
+      if (++nodes % 1024 === 0 && Date.now() > deadline) { stop = true; return; }
+      if (c >= bestCost) return;
+      if (i === opts2.length) { if (hallOk(p)) period(p + 1, c); return; }
+      const list = opts2[i].map(l => ({ l, key: typeof l === 'object' && l ? lessonCost(l, p) + rng() * 1.5 : 1e6 })).sort((a, b) => a.key - b.key);
+      for (const { l } of list) {
+        // A skipped period is a free period: cheap late in the day, very expensive early on.
+        if (!l || l === 'early') { pick(i + 1, c + (l ? 500 + (7 - p) * 50 : 40)); continue; }
+        if (busy[l.ti * 8 + p]) continue;
+        busy[l.ti * 8 + p] = 1; l.p = p;
+        pick(i + 1, c + lessonCost(l, p));
+        busy[l.ti * 8 + p] = 0; l.p = 0;
+        if (stop) return;
+      }
+    }
+    pick(0, cost);
+  }
+
+  if (hallOk(0)) period(1, 0);
+  return { best, exhausted: !stop };
+}
+
+function solveDay(data, day, absent) {
+  const all = dayLessons(data, day);
+  const full = fullClasses(all);
+  const present = all.filter(l => !absent.has(l.t));
+  const cancelled = all.filter(l => absent.has(l.t));
+  const finish = (placed, extra) => {
+    const res = { placed, cancelled, full, dropped: [], allow7: false, ...extra };
+    res.L = Math.max(0, ...placed.map(x => x.p));
+    res.gaps = countGaps(res);
+    res.problems = verify(res);
+    return res;
+  };
+  if (!absent.size || !present.length) return finish(present.map(l => ({ ...l, p: l.orig })));
+
+  // Lower-grade lessons move only when their teacher also teaches grade 4 or 5 that day.
+  const teachesFull = new Set(present.filter(l => full.has(l.c)).map(l => l.t));
+  const locked = present.filter(l => !full.has(l.c) && !teachesFull.has(l.t));
+  const floats = present.filter(l => !full.has(l.c) && teachesFull.has(l.t)).map(l => ({ ...l, float: true }));
+  const byClass = new Map();
+  present.filter(l => full.has(l.c)).forEach(l => { if (!byClass.has(l.c)) byClass.set(l.c, []); byClass.get(l.c).push(l); });
+  let groups = [...byClass].map(([c, lessons]) => ({ c, lessons }));
+  const seed = 1234 + day * 101 + [...absent].sort().join('').length * 13;
+  const collect = (r, extra) => {
+    const placed = locked.map(l => ({ ...l, p: l.orig }));
+    r.classes.forEach(ls => ls.forEach(l => placed.push(l)));
+    r.floats.forEach(l => placed.push(l));
+    return finish(placed, extra);
+  };
+
+  // Anchor one row first (periods 1..n back to back) to cut the search space; lifted if it blocks every arrangement.
+  const firstN = present.filter(l => l.t === ANCHOR).length;
+  for (const firstHi of firstN ? [firstN, 0] : [0]) {
+    const o = firstHi ? { firstHi } : {};
+    // 1) perfect: everything kept, nothing pushed into period 7.
+    let r = search(groups, floats, locked, { ...o, allow7: false }, 1500, seed);
+    if (r?.best) return collect(r.best, {});
+    // 2) still perfect, but a lesson may move into period 7.
+    r = search(groups, floats, locked, { ...o, allow7: true }, 600, seed + 1);
+    if (r?.best) return collect(r.best, { allow7: true });
+    // 3) a full day without free periods is impossible today: keep every lesson, make the
+    //    first 4 periods perfect (then 3, 2...) and fit the rest after them.
+    for (let k = 4; k >= 1; k--) {
+      r = search(groups, floats, locked, { ...o, allow7: true, prefix: k }, 700, seed + 10 + k);
+      if (r?.best) return collect(r.best, { prefix: k });
+    }
+    // 4) not even that is possible (e.g. more classes than teachers left): fewest free periods, as late as possible.
+    r = search(groups, floats, locked, { ...o, allow7: true, prefix: 7, soft: true }, 1500, seed + 20);
+    if (r?.best) return collect(r.best, { short: true });
+  }
+  return finish(present.map(l => ({ ...l, p: l.orig })), { failed: true });
+}
+
+function countGaps(res) {
+  const per = new Map();
+  res.placed.forEach(x => { if (res.full.has(x.c)) { if (!per.has(x.c)) per.set(x.c, []); per.get(x.c).push(x.p); } });
+  let g = 0;
+  for (const ps of per.values()) g += Math.max(...ps) - ps.length;
+  return g;
+}
+
+function verify(res) {
+  const t = new Set(), c = new Set(), problems = [];
+  for (const x of res.placed) {
+    const kt = x.t + '|' + x.p, kc = x.c + '|' + x.p;
+    if (t.has(kt)) problems.push(`تضارب للمعلم ${x.t} بالحصة ${x.p}`);
+    if (c.has(kc)) problems.push(`تضارب للصف ${x.c} بالحصة ${x.p}`);
+    t.add(kt); c.add(kc);
+  }
+  return problems;
+}
+
+if (typeof module !== 'undefined') module.exports = { solveDay, LIGHT };
+
+
+const DATA = JSON.parse(document.getElementById('tt-data').textContent);
+const LS_GRID = 'ttb-grid';
+try {
+  const local = JSON.parse(localStorage.getItem(LS_GRID) || 'null');
+  if (local && (local.rev || 0) > (DATA.rev || 0)) { DATA.grid = local.grid; DATA.rev = local.rev; }
+} catch (e) {}
+const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس'];
+const AR = n => String(n).replace(/\d/g, d => '٠١٢٣٤٥٦٧٨٩'[d]);
+const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+const fmtClass = c => c.replace(/ه$/, 'هـ');
+const subj = s => s === 'E' ? 'إنجليزي' : s;
+const today = new Date().getDay();
+const LS = 'ttb-ui';
+let ui = { day: today <= 4 ? today : 0, absent: [], view: 'teachers' };
+try { Object.assign(ui, JSON.parse(localStorage.getItem(LS) || '{}')); } catch (e) {}
+ui.absent = ui.absent.filter(t => DATA.teachers.includes(t));
+if (!['teachers', 'classes'].includes(ui.view)) ui.view = 'teachers';
+let result = null, busy = false, editDay = ui.day, draft = null, dirty = false;
+const saveUi = () => { try { localStorage.setItem(LS, JSON.stringify(ui)); } catch (e) {} };
+
+function teacherSubjects(t) {
+  const s = new Set();
+  DATA.grid[t].forEach(day => day.forEach(c => { if (c && c.includes(':')) s.add(subj(c.split(':')[1])); }));
+  return [...s].slice(0, 2).join(' · ');
+}
+function teachesOn(t, d) { return DATA.grid[t][d].some(Boolean); }
+
+function toast(msg) {
+  const el = document.createElement('div');
+  el.className = 'toast'; el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2600);
+}
+
+function run() {
+  busy = true; render();
+  setTimeout(() => {
+    result = solveDay(DATA, ui.day, new Set(ui.absent));
+    busy = false; render();
+  }, 30);
+}
+
+function cellHTML(x, opts) {
+  if (!x) return '<td></td>';
+  const cls = x.light ? 'lt' : '';
+  const main = opts.byClass ? x.t : fmtClass(x.c);
+  return `<td class="${cls}"><div class="cell"><span class="c">${esc(main)}</span><span class="s">${esc(subj(x.s))}</span></div></td>`;
+}
+
+function headRow(L, first) {
+  let h = `<tr><th>${first}</th>`;
+  for (let p = 1; p <= L; p++) h += `<th><span class="pn num">${AR(p)}</span>الحصة</th>`;
+  return h + '</tr>';
+}
+
+function dayTeachers() { return DATA.teachers.filter(t => teachesOn(t, ui.day)); }
+
+function teacherTable(r) {
+  const L = Math.max(r.L, 1);
+  let rows = '';
+  for (const t of dayTeachers()) {
+    const off = ui.absent.includes(t);
+    rows += `<tr class="${off ? 'off' : ''}"><th>${esc(t)}${off ? ' <small>· غائب</small>' : ''}</th>`;
+    for (let p = 1; p <= L; p++) rows += off ? '<td></td>' : cellHTML(r.placed.find(x => x.t === t && x.p === p), {});
+    rows += '</tr>';
+  }
+  return `<div class="scroller"><table class="tt"><thead>${headRow(L, 'المعلم')}</thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function classTable(r) {
+  const L = Math.max(r.L, 1);
+  const classes = [...new Set([...r.placed, ...r.cancelled].map(x => x.c))]
+    .sort((a, b) => a.localeCompare(b, 'ar', { numeric: true }));
+  let rows = '';
+  for (const c of classes) {
+    rows += `<tr><th>${esc(fmtClass(c))}</th>`;
+    const mine = r.placed.filter(x => x.c === c);
+    const last = Math.max(0, ...mine.map(x => x.p));
+    for (let p = 1; p <= L; p++) {
+      const x = mine.find(y => y.p === p);
+      rows += !x && r.full.has(c) && p < last ? '<td class="gap"><span>إشغال</span></td>' : cellHTML(x, { byClass: true });
+    }
+    rows += '</tr>';
+  }
+  return `<div class="scroller"><table class="tt"><thead>${headRow(L, 'الصف')}</thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// ---- Share as image -------------------------------------------------------
+async function drawImage(r) {
+  try { await document.fonts.ready; } catch (e) {}
+  const teachers = dayTeachers();
+  const L = Math.max(r.L, 1);
+  const S = 2, nameW = 150, colW = 128, rowH = 74, headH = 54, top = 118, pad = 28;
+  const W = pad * 2 + nameW + colW * L, H = top + headH + rowH * teachers.length + pad;
+  const cv = document.createElement('canvas');
+  cv.width = W * S; cv.height = H * S;
+  const g = cv.getContext('2d');
+  g.scale(S, S);
+  g.direction = 'rtl';
+  const F = (w, px) => `${w} ${px}px "IBM Plex Sans Arabic", Tahoma, sans-serif`;
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#11221d'; g.textAlign = 'right'; g.textBaseline = 'alphabetic';
+  g.font = F(700, 34); g.fillText(`جدول التعويض · ${DAYS[ui.day]}`, W - pad, 56);
+  g.font = F(500, 18); g.fillStyle = '#587069';
+  g.fillText(ui.absent.length ? `الغياب: ${ui.absent.join('، ')}` : 'ما في غياب', W - pad, 90);
+  const x0 = W - pad; // right edge, columns run right to left
+  const colX = p => x0 - nameW - colW * p; // left edge of period p (1-based)
+  g.fillStyle = '#e3ebe8'; g.fillRect(pad, top, W - pad * 2, headH);
+  g.textAlign = 'center'; g.fillStyle = '#11221d';
+  g.font = F(700, 17); g.fillText('المعلم', x0 - nameW / 2, top + 34);
+  for (let p = 1; p <= L; p++) { g.font = F(700, 22); g.fillText(`الحصة ${AR(p)}`, colX(p) + colW / 2, top + 35); }
+  teachers.forEach((t, i) => {
+    const y = top + headH + rowH * i;
+    const off = ui.absent.includes(t);
+    if (off) { g.fillStyle = '#fbe3de'; g.fillRect(pad, y, W - pad * 2, rowH); }
+    g.textAlign = 'right'; g.font = F(700, 21); g.fillStyle = off ? '#d2452f' : '#11221d';
+    g.fillText(t, x0 - 14, y + rowH / 2 + 7);
+    if (off) { g.textAlign = 'center'; g.font = F(700, 18); g.fillText('غائب', (pad + colX(0)) / 2, y + rowH / 2 + 6); }
+    else for (let p = 1; p <= L; p++) {
+      const x = r.placed.find(l => l.t === t && l.p === p);
+      if (!x) continue;
+      const cx = colX(p) + colW / 2;
+      g.textAlign = 'center';
+      g.fillStyle = x.light ? '#7a4fc9' : '#11221d'; g.font = F(700, 24);
+      g.fillText(fmtClass(x.c), cx, y + 36);
+      g.fillStyle = '#587069'; g.font = F(500, 15);
+      g.fillText(subj(x.s), cx, y + 58);
+    }
+    g.strokeStyle = '#c9d6d1'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(pad, y + rowH); g.lineTo(W - pad, y + rowH); g.stroke();
+  });
+  const bottom = top + headH + rowH * teachers.length;
+  g.strokeStyle = '#c9d6d1';
+  g.strokeRect(pad, top, W - pad * 2, bottom - top);
+  for (let p = 0; p <= L; p++) { g.beginPath(); g.moveTo(colX(p), top); g.lineTo(colX(p), bottom); g.stroke(); }
+  return new Promise(res => cv.toBlob(res, 'image/png'));
+}
+
+let shareBlob = null, shareUrl = null;
+async function openShare() {
+  shareBlob = await drawImage(result);
+  if (shareUrl) URL.revokeObjectURL(shareUrl);
+  shareUrl = URL.createObjectURL(shareBlob);
+  const box = document.getElementById('share');
+  box.hidden = false;
+  box.querySelector('img').src = shareUrl;
+}
+async function saveShare() {
+  const name = `جدول-التعويض-${DAYS[ui.day]}.png`;
+  // Outside Claude: the phone's own share sheet (WhatsApp is right there), else a plain download.
+  if (!window.claude) {
+    const file = new File([shareBlob], name, { type: 'image/png' });
+    if (navigator.canShare?.({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: 'جدول التعويض' }); return; }
+      catch (e) { if (e?.name === 'AbortError') return; }
+    }
+    const a = document.createElement('a');
+    a.href = shareUrl; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    toast('انحفظت الصورة: ابعتها على جروب الواتساب');
+    return;
+  }
+  const downloads = await window.claude.use('downloads');
+  if (!downloads) { toast('اضغط مطوّلًا على الصورة واختار حفظ أو مشاركة'); return; }
+  try { await downloads.save({ filename: name, data: shareBlob }); toast('جاهزة: ابعتها على جروب الواتساب'); }
+  catch (err) { if (err?.code !== 'declined') toast('اضغط مطوّلًا على الصورة واختار حفظ أو مشاركة'); }
+}
+async function copyShare() {
+  try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': shareBlob })]); toast('نسخت الصورة: الصقها بجروب الواتساب'); }
+  catch (e) { toast('النسخ مش مدعوم هون: اضغط "حفظ ومشاركة"'); }
+}
+
+function resultsHTML() {
+  if (busy) return `<div class="panel"><p><span class="spin"></span> عم رتّب الجدول…</p></div>`;
+  if (!result) return '';
+  const r = result;
+  const ok = r.problems.length === 0;
+  const views = { teachers: 'جدول المعلمين', classes: 'جدول الصفوف' };
+  const body = ui.view === 'classes' ? classTable(r) : teacherTable(r);
+  return `
+  <div class="stats">
+    <div class="stat"><div class="v num">${AR(r.L)}</div><div class="k">حصص اليوم</div></div>
+    <div class="stat ${r.gaps ? 'bad' : 'good'}"><div class="v num">${AR(r.gaps)}</div><div class="k">حصص إشغال</div></div>
+    <div class="stat ${ok ? 'good' : 'bad'}"><div class="v num">${AR(r.problems.length)}</div><div class="k">تضارب</div></div>
+  </div>
+  ${ok ? '' : `<div class="verdict fail">✗ ${esc(r.problems.join('، '))}</div>`}
+  ${r.prefix ? `<p class="note">مع هالعدد من الغياب ما في ترتيب لليوم كامل بدون إشغال، فخليت أول ${AR(r.prefix)} حصص كاملة لكل الصفوف بدون إشغال، والباقي بعدها. ما انلغت ولا حصة.</p>` : ''}
+  ${r.short ? `<p class="note">اليوم عدد الصفوف أكثر من المعلمين الحاضرين اللي بيعلّموها، فمستحيل كل صف يكون معه معلم بكل حصة مهما رتبنا. رتبتها بأقل عدد إشغال ممكن (${AR(r.gaps)})، وأبعدتها لآخر اليوم قد ما بقدر. ما انلغت ولا حصة.</p>` : ''}
+  <div class="row" style="justify-content:space-between">
+    <div class="tabs" role="group" aria-label="طريقة العرض">${Object.entries(views).map(([k, v]) => `<button data-view="${k}" aria-pressed="${ui.view === k}">${v}</button>`).join('')}</div>
+    <button class="go small" id="share-btn">مشاركة كصورة</button>
+  </div>
+  ${body}
+  <div class="legend"><span style="--c:var(--light)">رياضة وفن: آخر اليوم</span><span style="--c:var(--absent-soft)">معلم غائب</span></div>`;
+}
+
+function plannerHTML() {
+  const teachers = DATA.teachers.map(t => {
+    const on = teachesOn(t, ui.day);
+    const n = DATA.grid[t][ui.day].filter(Boolean).length;
+    return `<button class="chip" data-t="${esc(t)}" aria-pressed="${ui.absent.includes(t)}" ${on ? '' : 'disabled'}><b>${esc(t)}</b><small>${esc(teacherSubjects(t))} · ${AR(n)} حصص</small></button>`;
+  }).join('');
+  return `
+  <section class="panel" aria-label="الغياب">
+    <div class="row" style="justify-content:space-between">
+      <div class="days row" role="group" aria-label="اليوم">${DAYS.map((d, i) => `<button data-day="${i}" aria-pressed="${ui.day === i}">${d}</button>`).join('')}</div>
+      ${ui.absent.length ? `<button class="ghost" id="clear">مسح الغياب</button>` : ''}
+    </div>
+    <div class="label">مين غايب اليوم؟</div>
+    <div class="chips">${teachers}</div>
+    <div class="row"><button class="go" id="go" ${busy ? 'disabled' : ''}>رتّب اليوم</button>
+      <span class="muted">${ui.absent.length ? `${AR(ui.absent.length)} غياب` : 'ما في غياب'}</span></div>
+  </section>`;
+}
+
+function editorClashes(d) {
+  const clashes = new Set();
+  for (let p = 0; p < 7; p++) {
+    const seen = new Map();
+    for (const t of DATA.teachers) {
+      const c = (draft[t][d][p] || '').split(':')[0].trim();
+      if (!c) continue;
+      if (seen.has(c)) { clashes.add(t + p); clashes.add(seen.get(c) + p); }
+      seen.set(c, t);
+    }
+  }
+  return clashes;
+}
+
+// Updates the editor in place so a click on Save right after typing is never swallowed by a re-render.
+function refreshEditor() {
+  const clashes = editorClashes(editDay);
+  document.querySelectorAll('input[data-et]').forEach(inp => {
+    inp.closest('td').classList.toggle('clash', clashes.has(inp.dataset.et + inp.dataset.ep));
+  });
+  const save = document.getElementById('save'), discard = document.getElementById('discard');
+  if (save) save.disabled = !(dirty && !clashes.size);
+  if (discard) discard.disabled = !dirty;
+  const note = document.getElementById('clash-note');
+  if (note) note.textContent = clashes.size ? ` في ${AR(clashes.size / 2)} تضارب لازم ينحل.` : '';
+}
+
+function editorHTML() {
+  if (!draft) draft = JSON.parse(JSON.stringify(DATA.grid));
+  const d = editDay;
+  const clashes = editorClashes(d);
+  let rows = '';
+  for (const t of DATA.teachers) {
+    rows += `<tr><th>${esc(t)}</th>`;
+    for (let p = 0; p < 7; p++) {
+      const v = draft[t][d][p] || '';
+      const [c, s] = v ? v.split(':') : ['', ''];
+      rows += `<td class="${clashes.has(t + p) ? 'clash' : ''}"><input id="e-${d}-${DATA.teachers.indexOf(t)}-${p}" data-et="${esc(t)}" data-ep="${p}" value="${esc(c ? `${c} ${s || ''}`.trim() : '')}" placeholder="—" aria-label="${esc(t)} الحصة ${p + 1}"></td>`;
+    }
+    rows += '</tr>';
+  }
+  return `<section class="panel">
+    <div class="row" style="justify-content:space-between">
+      <div class="days row" role="group">${DAYS.map((x, i) => `<button data-eday="${i}" aria-pressed="${editDay === i}">${x}</button>`).join('')}</div>
+      <div class="row"><button class="ghost" id="discard" ${dirty ? '' : 'disabled'}>تراجع</button><button class="go" id="save" ${dirty && !clashes.size ? '' : 'disabled'} style="font-size:1.1rem;padding:8px 18px">حفظ الجدول</button></div>
+    </div>
+    <p class="note">اكتب الصف ثم المادة، مثل: <b>5ب عربي</b> أو <b>4د E</b>. الخانة الحمرا معناها نفس الصف عند معلمين بنفس الحصة، وما بينحفظ الجدول لحتى تنحل.
+<b id="clash-note" style="color:var(--absent)">${clashes.size ? ` في ${AR(clashes.size / 2)} تضارب لازم ينحل.` : ''}</b></p>
+    <div class="scroller"><table class="tt editgrid"><thead>${headRow(7, 'المعلم')}</thead><tbody>${rows}</tbody></table></div>
+  </section>`;
+}
+
+function render() {
+  const app = document.getElementById('app');
+  const focusId = document.activeElement?.id;
+  const tab = ui.tab || 'plan';
+  app.innerHTML = `
+  <header class="top">
+    <h1>جدول التعويض</h1>
+    <div class="tabs" role="group" aria-label="القسم">
+      <button data-tab="plan" aria-pressed="${tab === 'plan'}">ترتيب اليوم</button>
+      <button data-tab="edit" aria-pressed="${tab === 'edit'}">الجدول الأصلي</button>
+    </div>
+  </header>
+  ${tab === 'plan' ? plannerHTML() + resultsHTML() : editorHTML()}
+  <div class="share-back" id="share" hidden>
+    <div class="share-box" role="dialog" aria-label="مشاركة كصورة">
+      <img alt="صورة جدول التعويض">
+      <div class="row"><button class="go small" id="share-save">حفظ ومشاركة</button><button class="ghost" id="share-copy">نسخ الصورة</button><button class="ghost" id="share-close">إغلاق</button></div>
+      <p class="note">على الموبايل: اضغط "حفظ ومشاركة" واختار واتساب، أو اضغط مطوّلًا على الصورة.</p>
+    </div>
+  </div>`;
+  if (focusId) { const el = document.getElementById(focusId); if (el) { el.focus(); if (el.setSelectionRange) { const n = el.value.length; el.setSelectionRange(n, n); } } }
+}
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b || b.disabled) return;
+  if (b.dataset.tab) { ui.tab = b.dataset.tab; saveUi(); render(); return; }
+  if (b.dataset.day) { ui.day = +b.dataset.day; ui.absent = ui.absent.filter(t => teachesOn(t, ui.day)); saveUi(); run(); return; }
+  if (b.dataset.t) {
+    const t = b.dataset.t;
+    ui.absent = ui.absent.includes(t) ? ui.absent.filter(x => x !== t) : [...ui.absent, t];
+    saveUi(); result = null; render(); return;
+  }
+  if (b.dataset.view) { ui.view = b.dataset.view; saveUi(); render(); return; }
+  if (b.dataset.eday) { editDay = +b.dataset.eday; render(); return; }
+  if (b.id === 'go') { run(); return; }
+  if (b.id === 'clear') { ui.absent = []; saveUi(); run(); return; }
+  if (b.id === 'share-btn') { openShare(); return; }
+  if (b.id === 'share-save') { saveShare(); return; }
+  if (b.id === 'share-copy') { copyShare(); return; }
+  if (b.id === 'share-close') { document.getElementById('share').hidden = true; return; }
+  if (b.id === 'discard') { draft = null; dirty = false; render(); return; }
+  if (b.id === 'save') { saveTimetable(); return; }
+});
+document.addEventListener('change', e => {
+});
+document.addEventListener('input', e => {
+  if (!e.target.dataset.et) return;
+  const t = e.target.dataset.et, p = +e.target.dataset.ep;
+  const parts = e.target.value.trim().split(/\s+/).filter(Boolean);
+  draft[t][editDay][p] = parts.length ? `${parts[0]}:${parts.slice(1).join(' ')}` : '';
+  dirty = true; refreshEditor();
+});
+
+async function saveTimetable() {
+  DATA.grid = draft; DATA.rev = (DATA.rev || 0) + 1; draft = null; dirty = false; result = null;
+  try { localStorage.setItem(LS_GRID, JSON.stringify({ rev: DATA.rev, grid: DATA.grid })); } catch (e) {}
+  render();
+  const artifact = await window.claude?.use?.('artifact');
+  if (!artifact) { toast('انحفظ الجدول على هالجهاز'); return; }
+  const reset = document.head.querySelector('style')?.textContent || '';
+  const json = JSON.stringify(DATA).replace(/</g, '\\u003c');
+  const parts = [
+    document.querySelector('title').outerHTML,
+    '<meta name="claude:viewport-fit-sides" content="cover">',
+    ...[...document.querySelectorAll('link[rel="preconnect"],link[rel="stylesheet"]')].map(l => l.outerHTML),
+    document.getElementById('app-style').outerHTML,
+    '<div id="app"></div>',
+    `<script type="application/json" id="tt-data">${json}<\/script>`,
+    document.getElementById('app-main').outerHTML,
+  ];
+  const html = `<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>${reset}</style></head><body>${parts.join('\n')}</body></html>`;
+  try { await artifact.publish(html); toast('انحفظ الجدول للكل'); }
+  catch (err) { toast(err?.code === 'conflict' ? 'حدا تاني حفظ بنفس الوقت، رجعت للنسخة الأحدث' : 'انحفظ على هالجهاز بس: ما عندك صلاحية تعديل للكل'); }
+}
+
+render();
+run();
+</script>
+
+</body>
+</html>
