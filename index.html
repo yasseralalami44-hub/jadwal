@@ -202,6 +202,11 @@ function search(groups, floats, locked, opts, budget, seed) {
     return { c: g.c, n: Math.max(E, fixedEnd), E, lessons };
   });
   for (const cl of classes) for (const l of cl.lessons) if (l.lo > l.hi) return null;
+  // core lessons (maths, Arabic...) before PE/art in a class's day: a core lesson placed after a PE/art lesson
+  // of the same class costs extra, so when both orders are possible the core one comes first
+  const byClassName = new Map(classes.map(cl => [cl.c, cl.lessons]));
+  const orderPen = (l, p) => LIGHT.has(l.s) ? 0 :
+    (byClassName.get(l.c) || []).some(o => o.p && o.p < p && LIGHT.has(o.s)) ? 30 : 0;
   const fl = floats.map(l => ({ ...l, ti: tid(l.t), p: 0 }));
   locked.forEach(l => tid(l.t));
   const lockedByClass = new Map();
@@ -281,7 +286,7 @@ function search(groups, floats, locked, opts, budget, seed) {
         if (!l || l === 'early') { pick(i + 1, c + (l ? 500 + (7 - p) * 50 : 40)); continue; }
         if (busy[l.ti * 8 + p]) continue;
         busy[l.ti * 8 + p] = 1; l.p = p;
-        pick(i + 1, c + lessonCost(l, p));
+        pick(i + 1, c + lessonCost(l, p) + orderPen(l, p));
         busy[l.ti * 8 + p] = 0; l.p = 0;
         if (stop) return;
       }
@@ -385,6 +390,78 @@ function fillSlots(groups, floats, locked, budget, anchorHi, K = Infinity, seed 
   }
 }
 
+// Final polish (2026-10-25): inside a class, core lessons (maths, Arabic...) should come before PE/art.
+// Tries to swap a PE/art lesson with a later core lesson of the same class; when the PE teacher is busy at that
+// period with another class, that class swaps the same two periods too. A change is kept only when it lowers
+// the number of "core after PE/art" pairs, adds no إشغال and no clash. Fixed lessons never move, nothing new
+// goes into period 7 and جهاد stays in periods 1..anchorN.
+function improveOrder(res, anchorN) {
+  const placed = res.placed;
+  const classOf = c => placed.filter(x => x.c === c);
+  const pairs = c => {
+    const ls = classOf(c);
+    let n = 0;
+    for (const a of ls) if (LIGHT.has(a.s)) for (const b of ls) if (!NONCORE.has(b.s) && b.p > a.p) n++;
+    return n;
+  };
+  const classes = [...new Set(placed.map(x => x.c))].filter(c => res.full.has(c));
+  // each "core after PE/art" pair costs 20; each period a lesson moved away from its own costs 1, so the
+  // timetable stays as close to the original as it can
+  const score = () => classes.reduce((s, c) => s + 20 * pairs(c), 0) +
+    placed.reduce((s, x) => s + (res.full.has(x.c) ? Math.abs(x.p - x.orig) : 0), 0);
+  const canGo = (x, p) => !x.fixed && (p <= 6 || x.orig === 7) && (x.t !== ANCHOR || !anchorN || p <= anchorN);
+  // swap periods p and q inside class c (a lesson may be missing at one of them)
+  const swapMoves = (c, p, q) => {
+    if (!res.full.has(c)) return null;
+    const ls = classOf(c);
+    const x = ls.find(y => y.p === p), y = ls.find(z => z.p === q);
+    const m = [];
+    if (x) m.push([x, q]);
+    if (y) m.push([y, p]);
+    return m;
+  };
+  const tryMoves = moves => {
+    if (!moves.every(([x, p]) => canGo(x, p))) return false;
+    const old = moves.map(([x]) => [x, x.p]);
+    const before = score(), gapsBefore = countGaps(res);
+    moves.forEach(([x, p]) => { x.p = p; });
+    if (!verify(res).length && countGaps(res) <= gapsBefore && score() < before) return true;
+    old.forEach(([x, p]) => { x.p = p; });
+    return false;
+  };
+  // random walk over class swaps (plateaus allowed), keeping the best timetable seen
+  const rng = mulberry(4242);
+  const snap = () => placed.map(x => x.p);
+  const restore = sn => placed.forEach((x, i) => { x.p = sn[i]; });
+  let best = score(), bestSnap = snap(), cur = best, gapsNow = countGaps(res);
+  const fullCls = classes;
+  for (let it = 0; it < 6000; it++) {
+    const c = fullCls[Math.floor(rng() * fullCls.length)];
+    const ps = [...new Set(classOf(c).map(x => x.p))];
+    const p = ps[Math.floor(rng() * ps.length)], q = 1 + Math.floor(rng() * 6);
+    if (p === q) continue;
+    let moves = swapMoves(c, p, q);
+    if (!moves || !moves.every(([x, t]) => canGo(x, t))) continue;
+    // teachers that would clash: their other class swaps p and q as well (one level)
+    for (const [x, t] of moves.slice()) {
+      const bl = placed.find(y => y.t === x.t && y.p === t && y.c !== c);
+      if (bl) { const m2 = swapMoves(bl.c, p, q); if (!m2) { moves = null; break; } moves = moves.concat(m2.filter(m => !moves.some(n => n[0] === m[0]))); }
+    }
+    if (!moves || !moves.every(([x, t]) => canGo(x, t))) continue;
+    const old = snap();
+    moves.forEach(([x, t]) => { x.p = t; });
+    const g = countGaps(res), v = verify(res).length ? Infinity : score();
+    if (v !== Infinity && g <= gapsNow && (v <= cur || rng() < 0.05)) {
+      cur = v;
+      if (v < best) { best = v; bestSnap = snap(); }
+    } else restore(old);
+  }
+  restore(bestSnap);
+  res.gaps = countGaps(res);
+  res.problems = verify(res);
+  return res;
+}
+
 function solveDay(data, day, absent) {
   const all = dayLessons(data, day);
   const full = fullClasses(all);
@@ -397,8 +474,10 @@ function solveDay(data, day, absent) {
     res.L = Math.max(0, ...placed.map(x => x.p));
     res.gaps = countGaps(res);
     res.problems = verify(res);
+    if (absent.size && !res.failed && !res.problems.length) improveOrder(res, anchorN);
     return res;
   };
+  const anchorN = present.filter(l => l.t === ANCHOR).length;
   if (!absent.size || !present.length) return finish(present.map(l => ({ ...l, p: l.orig })));
 
   // Lower-grade lessons move only when their teacher also teaches grade 4 or 5 that day.
