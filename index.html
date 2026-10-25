@@ -87,7 +87,6 @@ table.tt{border-collapse:collapse;width:100%;min-width:640px}
 .cell{display:grid;gap:0;justify-items:center;min-width:58px}
 .cell .c{font-weight:700;font-size:1rem}
 .cell .s{font-size:.72rem;color:var(--muted)}
-td.lt .c{color:var(--light)}
 td.gap{background:var(--absent-soft);color:var(--absent);font-weight:700;font-size:.8rem}
 .go.small{font-size:1.1rem;padding:8px 18px}
 .share-back{position:fixed;inset:0;background:rgb(0 0 0/.55);z-index:30;display:grid;place-items:center;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));direction:rtl}
@@ -126,6 +125,7 @@ td.gap{background:var(--absent-soft);color:var(--absent);font-weight:700;font-si
 <script id="app-main">
 const LIGHT = new Set(['رياضة', 'فن']);
 const ANCHOR = String.fromCharCode(1580, 1607, 1575, 1583);
+const MOVABLE = String.fromCharCode(1575, 1581, 1605, 1583);   // احمد: the only teacher whose PE/art may move
 
 function mulberry(seed) {
   return function () {
@@ -183,11 +183,15 @@ function search(groups, floats, locked, opts, budget, seed) {
     const n = g.lessons.length;
     const lastOrig = Math.max(...g.lessons.map(l => l.orig));
     const lessons = g.lessons.map(l => {
-      let hi = opts.prefix ? 7 : !opts.allow7 && l.orig !== 7 ? Math.min(n, 6) : n;
+      if (l.fixed) return { ...l, ti: tid(l.t), lo: l.orig, hi: l.orig, p: 0, n, tail: false };
+      // period 7 is only for the lessons that are already there: nothing new is pushed into it
+      let hi = l.orig === 7 ? (opts.prefix ? 7 : n) : (opts.prefix ? 6 : Math.min(n, 6));
       if (opts.firstHi && l.t === ANCHOR) hi = Math.min(hi, opts.firstHi);
       return { ...l, ti: tid(l.t), lo: 1, hi, p: 0, n: opts.prefix ? Math.max(n, 5) : n, tail: l.light && l.orig === lastOrig };
     });
-    return { c: g.c, n, lessons };
+    // a fixed lesson (PE/art in period 6 or 7) keeps its period, so the class day reaches at least that period
+    const fixedEnd = Math.max(0, ...lessons.filter(l => l.fixed).map(l => l.orig));
+    return { c: g.c, n: Math.max(n, fixedEnd), lessons };
   });
   for (const cl of classes) for (const l of cl.lessons) if (l.lo > l.hi) return null;
   const fl = floats.map(l => ({ ...l, ti: tid(l.t), p: 0 }));
@@ -199,7 +203,7 @@ function search(groups, floats, locked, opts, budget, seed) {
   const nT = tIdx.size;
   const busy = new Uint8Array(nT * 8);
   locked.forEach(l => { busy[tid(l.t) * 8 + l.orig] = 1; });
-  const flHi = l => (opts.allow7 || l.orig === 7 ? 7 : 6);
+  const flHi = l => (l.orig === 7 ? 7 : 6);
   const freeIn = (ti, a, b) => { let n = 0; for (let q = a; q <= b; q++) if (!busy[ti * 8 + q]) n++; return n; };
 
   let best = null, bestCost = Infinity, nodes = 0, stop = false;
@@ -284,6 +288,8 @@ function search(groups, floats, locked, opts, budget, seed) {
 function solveDay(data, day, absent) {
   const all = dayLessons(data, day);
   const full = fullClasses(all);
+  // period-7 lessons (PE, art, vocational) and PE/art in period 6 never move; only احمد's lessons may move
+  all.forEach(l => { l.fixed = l.t !== MOVABLE && (l.orig === 7 || (l.light && l.orig === 6)); });
   const present = all.filter(l => !absent.has(l.t));
   const cancelled = all.filter(l => absent.has(l.t));
   const finish = (placed, extra) => {
@@ -297,8 +303,8 @@ function solveDay(data, day, absent) {
 
   // Lower-grade lessons move only when their teacher also teaches grade 4 or 5 that day.
   const teachesFull = new Set(present.filter(l => full.has(l.c)).map(l => l.t));
-  const locked = present.filter(l => !full.has(l.c) && !teachesFull.has(l.t));
-  const floats = present.filter(l => !full.has(l.c) && teachesFull.has(l.t)).map(l => ({ ...l, float: true }));
+  const locked = present.filter(l => !full.has(l.c) && (!teachesFull.has(l.t) || l.fixed));
+  const floats = present.filter(l => !full.has(l.c) && teachesFull.has(l.t) && !l.fixed).map(l => ({ ...l, float: true }));
   const byClass = new Map();
   present.filter(l => full.has(l.c)).forEach(l => { if (!byClass.has(l.c)) byClass.set(l.c, []); byClass.get(l.c).push(l); });
   let groups = [...byClass].map(([c, lessons]) => ({ c, lessons }));
@@ -399,7 +405,7 @@ function run() {
 
 function cellHTML(x, opts) {
   if (!x) return '<td></td>';
-  const cls = x.light ? 'lt' : '';
+  const cls = '';
   const main = opts.byClass ? x.t : fmtClass(x.c);
   return `<td class="${cls}"><div class="cell"><span class="c">${esc(main)}</span><span class="s">${esc(subj(x.s))}</span></div></td>`;
 }
@@ -443,12 +449,15 @@ function classTable(r) {
 }
 
 // ---- Share as image -------------------------------------------------------
-async function drawImage(r) {
+async function drawImage(r, mode) {
   try { await document.fonts.ready; } catch (e) {}
-  const teachers = dayTeachers();
+  const byClass = mode === 'classes';
+  const rows = byClass
+    ? [...new Set([...r.placed, ...r.cancelled].map(x => x.c))].sort((a, b) => a.localeCompare(b, 'ar', { numeric: true }))
+    : dayTeachers();
   const L = Math.max(r.L, 1);
   const S = 2, nameW = 150, colW = 128, rowH = 74, headH = 54, top = 118, pad = 28;
-  const W = pad * 2 + nameW + colW * L, H = top + headH + rowH * teachers.length + pad;
+  const W = pad * 2 + nameW + colW * L, H = top + headH + rowH * rows.length + pad;
   const cv = document.createElement('canvas');
   cv.width = W * S; cv.height = H * S;
   const g = cv.getContext('2d');
@@ -457,45 +466,56 @@ async function drawImage(r) {
   const F = (w, px) => `${w} ${px}px "IBM Plex Sans Arabic", Tahoma, sans-serif`;
   g.fillStyle = '#ffffff'; g.fillRect(0, 0, W, H);
   g.fillStyle = '#11221d'; g.textAlign = 'right'; g.textBaseline = 'alphabetic';
-  g.font = F(700, 34); g.fillText(`جدول التعويض · ${DAYS[ui.day]}`, W - pad, 56);
+  g.font = F(700, 34); g.fillText(`${byClass ? 'جدول الصفوف' : 'جدول المعلمين'} · ${DAYS[ui.day]}`, W - pad, 56);
   g.font = F(500, 18); g.fillStyle = '#587069';
   g.fillText(ui.absent.length ? `الغياب: ${ui.absent.join('، ')}` : 'ما في غياب', W - pad, 90);
   const x0 = W - pad; // right edge, columns run right to left
   const colX = p => x0 - nameW - colW * p; // left edge of period p (1-based)
   g.fillStyle = '#e3ebe8'; g.fillRect(pad, top, W - pad * 2, headH);
   g.textAlign = 'center'; g.fillStyle = '#11221d';
-  g.font = F(700, 17); g.fillText('المعلم', x0 - nameW / 2, top + 34);
+  g.font = F(700, 17); g.fillText(byClass ? 'الصف' : 'المعلم', x0 - nameW / 2, top + 34);
   for (let p = 1; p <= L; p++) { g.font = F(700, 22); g.fillText(`الحصة ${AR(p)}`, colX(p) + colW / 2, top + 35); }
-  teachers.forEach((t, i) => {
+  rows.forEach((row, i) => {
     const y = top + headH + rowH * i;
-    const off = ui.absent.includes(t);
+    const off = !byClass && ui.absent.includes(row);
     if (off) { g.fillStyle = '#fbe3de'; g.fillRect(pad, y, W - pad * 2, rowH); }
     g.textAlign = 'right'; g.font = F(700, 21); g.fillStyle = off ? '#d2452f' : '#11221d';
-    g.fillText(t, x0 - 14, y + rowH / 2 + 7);
+    g.fillText(byClass ? fmtClass(row) : row, x0 - 14, y + rowH / 2 + 7);
     if (off) { g.textAlign = 'center'; g.font = F(700, 18); g.fillText('غائب', (pad + colX(0)) / 2, y + rowH / 2 + 6); }
-    else for (let p = 1; p <= L; p++) {
-      const x = r.placed.find(l => l.t === t && l.p === p);
-      if (!x) continue;
-      const cx = colX(p) + colW / 2;
-      g.textAlign = 'center';
-      g.fillStyle = x.light ? '#7a4fc9' : '#11221d'; g.font = F(700, 24);
-      g.fillText(fmtClass(x.c), cx, y + 36);
-      g.fillStyle = '#587069'; g.font = F(500, 15);
-      g.fillText(subj(x.s), cx, y + 58);
+    else {
+      const mine = r.placed.filter(l => (byClass ? l.c : l.t) === row);
+      const last = Math.max(0, ...mine.map(l => l.p));
+      for (let p = 1; p <= L; p++) {
+        const x = mine.find(l => l.p === p);
+        const cx = colX(p) + colW / 2;
+        g.textAlign = 'center';
+        if (!x) {
+          if (byClass && r.full.has(row) && p < last) {
+            g.fillStyle = '#fbe3de'; g.fillRect(colX(p) + 1, y + 1, colW - 2, rowH - 2);
+            g.fillStyle = '#d2452f'; g.font = F(700, 18); g.fillText('إشغال', cx, y + rowH / 2 + 6);
+          }
+          continue;
+        }
+        g.fillStyle = '#11221d'; g.font = F(700, 24);
+        g.fillText(byClass ? x.t : fmtClass(x.c), cx, y + 36);
+        g.fillStyle = '#587069'; g.font = F(500, 15);
+        g.fillText(subj(x.s), cx, y + 58);
+      }
     }
     g.strokeStyle = '#c9d6d1'; g.lineWidth = 1;
     g.beginPath(); g.moveTo(pad, y + rowH); g.lineTo(W - pad, y + rowH); g.stroke();
   });
-  const bottom = top + headH + rowH * teachers.length;
+  const bottom = top + headH + rowH * rows.length;
   g.strokeStyle = '#c9d6d1';
   g.strokeRect(pad, top, W - pad * 2, bottom - top);
   for (let p = 0; p <= L; p++) { g.beginPath(); g.moveTo(colX(p), top); g.lineTo(colX(p), bottom); g.stroke(); }
   return new Promise(res => cv.toBlob(res, 'image/png'));
 }
 
-let shareBlob = null, shareUrl = null;
-async function openShare() {
-  shareBlob = await drawImage(result);
+let shareBlob = null, shareUrl = null, shareMode = 'teachers';
+async function openShare(mode) {
+  shareMode = mode;
+  shareBlob = await drawImage(result, mode);
   if (shareUrl) URL.revokeObjectURL(shareUrl);
   shareUrl = URL.createObjectURL(shareBlob);
   const box = document.getElementById('share');
@@ -503,7 +523,7 @@ async function openShare() {
   box.querySelector('img').src = shareUrl;
 }
 async function saveShare() {
-  const name = `جدول-التعويض-${DAYS[ui.day]}.png`;
+  const name = `${shareMode === 'classes' ? 'جدول-الصفوف' : 'جدول-المعلمين'}-${DAYS[ui.day]}.png`;
   // Outside Claude: the phone's own share sheet (WhatsApp is right there), else a plain download.
   if (!window.claude) {
     const file = new File([shareBlob], name, { type: 'image/png' });
@@ -544,10 +564,10 @@ function resultsHTML() {
   ${r.short ? `<p class="note">اليوم عدد الصفوف أكثر من المعلمين الحاضرين اللي بيعلّموها، فمستحيل كل صف يكون معه معلم بكل حصة مهما رتبنا. رتبتها بأقل عدد إشغال ممكن (${AR(r.gaps)})، وأبعدتها لآخر اليوم قد ما بقدر. ما انلغت ولا حصة.</p>` : ''}
   <div class="row" style="justify-content:space-between">
     <div class="tabs" role="group" aria-label="طريقة العرض">${Object.entries(views).map(([k, v]) => `<button data-view="${k}" aria-pressed="${ui.view === k}">${v}</button>`).join('')}</div>
-    <button class="go small" id="share-btn">مشاركة كصورة</button>
+    <div class="row"><button class="go small" data-share="teachers">مشاركة جدول المعلمين</button><button class="go small" data-share="classes">مشاركة جدول الصفوف</button></div>
   </div>
   ${body}
-  <div class="legend"><span style="--c:var(--light)">رياضة وفن: آخر اليوم</span><span style="--c:var(--absent-soft)">معلم غائب</span></div>`;
+  <div class="legend"><span style="--c:var(--absent-soft)">معلم غائب</span></div>`;
 }
 
 function plannerHTML() {
@@ -658,7 +678,7 @@ document.addEventListener('click', e => {
   if (b.dataset.eday) { editDay = +b.dataset.eday; render(); return; }
   if (b.id === 'go') { run(); return; }
   if (b.id === 'clear') { ui.absent = []; saveUi(); run(); return; }
-  if (b.id === 'share-btn') { openShare(); return; }
+  if (b.dataset.share) { openShare(b.dataset.share); return; }
   if (b.id === 'share-save') { saveShare(); return; }
   if (b.id === 'share-copy') { copyShare(); return; }
   if (b.id === 'share-close') { document.getElementById('share').hidden = true; return; }
