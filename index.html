@@ -405,11 +405,26 @@ function improveOrder(res, anchorN) {
     return n;
   };
   const classes = [...new Set(placed.map(x => x.c))].filter(c => res.full.has(c));
-  // each "core after PE/art" pair costs 20; each period a lesson moved away from its own costs 1, so the
-  // timetable stays as close to the original as it can
-  const score = () => classes.reduce((s, c) => s + 20 * pairs(c), 0) +
+  // two or more free periods in a row in the middle of a teacher's day (2026-10-26: never)
+  const idleRuns = () => {
+    const per = new Map();
+    placed.forEach(x => { if (!per.has(x.t)) per.set(x.t, []); per.get(x.t).push(x.p); });
+    let n = 0;
+    for (const ps of per.values()) {
+      ps.sort((a, b) => a - b);
+      for (let i = 1; i < ps.length; i++) if (ps[i] - ps[i - 1] - 1 >= 2) n += ps[i] - ps[i - 1] - 2;
+    }
+    return n;
+  };
+  // a movable PE/art lesson before period 4 (2026-10-26: PE from period 4 on, when it works)
+  const earlyPE = () => placed.reduce((s, x) => s + (!x.fixed && LIGHT.has(x.s) && x.p < 4 ? 4 - x.p : 0), 0);
+  // weights: a double free period for a teacher 1000, a core lesson after PE/art in a class 20, PE early 15
+  // per period, and each period a lesson moved from its own 1 (the timetable stays close to the original)
+  const score = () => 1000 * idleRuns() + classes.reduce((s, c) => s + 20 * pairs(c), 0) + 15 * earlyPE() +
     placed.reduce((s, x) => s + (res.full.has(x.c) ? Math.abs(x.p - x.orig) : 0), 0);
-  const canGo = (x, p) => !x.fixed && (p <= 6 || x.orig === 7) && (x.t !== ANCHOR || !anchorN || p <= anchorN);
+  // nothing new goes into period 7, except احمد's PE (2026-10-26)
+  const canGo = (x, p) => !x.fixed && (p <= 6 || x.orig === 7 || (x.t === MOVABLE && LIGHT.has(x.s))) &&
+    (x.t !== ANCHOR || !anchorN || p <= anchorN);
   // swap periods p and q inside class c (a lesson may be missing at one of them)
   const swapMoves = (c, p, q) => {
     if (!res.full.has(c)) return null;
@@ -435,10 +450,10 @@ function improveOrder(res, anchorN) {
   const restore = sn => placed.forEach((x, i) => { x.p = sn[i]; });
   let best = score(), bestSnap = snap(), cur = best, gapsNow = countGaps(res);
   const fullCls = classes;
-  for (let it = 0; it < 6000; it++) {
+  for (let it = 0; it < 15000; it++) {
     const c = fullCls[Math.floor(rng() * fullCls.length)];
     const ps = [...new Set(classOf(c).map(x => x.p))];
-    const p = ps[Math.floor(rng() * ps.length)], q = 1 + Math.floor(rng() * 6);
+    const p = ps[Math.floor(rng() * ps.length)], q = 1 + Math.floor(rng() * 7);
     if (p === q) continue;
     let moves = swapMoves(c, p, q);
     if (!moves || !moves.every(([x, t]) => canGo(x, t))) continue;
@@ -457,6 +472,7 @@ function improveOrder(res, anchorN) {
     } else restore(old);
   }
   restore(bestSnap);
+  res.L = Math.max(0, ...placed.map(x => x.p));
   res.gaps = countGaps(res);
   res.problems = verify(res);
   return res;
