@@ -105,6 +105,8 @@ td.gap{background:var(--absent-soft);color:var(--absent);font-weight:700;font-si
 .tcard .arrow{color:var(--moved);font-weight:700}
 .tcard.cancel{border-color:var(--absent)}
 .muted{color:var(--muted)}
+.free{margin:0;padding:0;list-style:none;display:grid;gap:6px}
+.free b{color:var(--absent)}
 .note{font-size:.85rem;color:var(--muted);margin:0;max-width:75ch}
 
 .editgrid input{width:100%;min-width:76px;border:1px solid transparent;background:transparent;border-radius:6px;padding:5px 4px;text-align:center;font-size:.86rem}
@@ -339,11 +341,20 @@ function solveDay(data, day, absent) {
   return finish(present.map(l => ({ ...l, p: l.orig })), { failed: true });
 }
 
+// An empty period is إشغال only when a core lesson (Arabic, maths, English, science, social...) comes after it:
+// empty periods before a fixed PE/art/vocational lesson stay blank.
+const NONCORE = new Set(['رياضة', 'فن', 'مهني']);
+function gapPeriods(res, c) {
+  if (!res.full.has(c)) return [];
+  const mine = res.placed.filter(x => x.c === c);
+  const lastCore = Math.max(0, ...mine.filter(x => !NONCORE.has(x.s)).map(x => x.p));
+  const out = [];
+  for (let p = 1; p < lastCore; p++) if (!mine.some(x => x.p === p)) out.push(p);
+  return out;
+}
 function countGaps(res) {
-  const per = new Map();
-  res.placed.forEach(x => { if (res.full.has(x.c)) { if (!per.has(x.c)) per.set(x.c, []); per.get(x.c).push(x.p); } });
   let g = 0;
-  for (const ps of per.values()) g += Math.max(...ps) - ps.length;
+  for (const c of new Set(res.placed.map(x => x.c))) g += gapPeriods(res, c).length;
   return g;
 }
 
@@ -430,6 +441,25 @@ function teacherTable(r) {
   return `<div class="scroller"><table class="tt"><thead>${headRow(L, 'المعلم')}</thead><tbody>${rows}</tbody></table></div>`;
 }
 
+// For every period that has an إشغال: which present teachers are free then (no lesson in that period)
+function freeList(r) {
+  const out = [];
+  for (let p = 1; p <= r.L; p++) {
+    const classes = [...new Set(r.placed.map(x => x.c))].filter(c => gapPeriods(r, c).includes(p))
+      .sort((a, b) => a.localeCompare(b, 'ar', { numeric: true }));
+    if (!classes.length) continue;
+    const names = dayTeachers().filter(t => !ui.absent.includes(t) && !r.placed.some(x => x.t === t && x.p === p));
+    out.push({ p, classes, names });
+  }
+  return out;
+}
+function freeHTML(r) {
+  const f = freeList(r);
+  if (!f.length) return '';
+  return `<section class="panel"><div class="label">المعلمين المتفرغين للإشغال</div><ul class="free">${f.map(x =>
+    `<li><b>الحصة ${AR(x.p)}</b> <span class="muted">(إشغال ${esc(x.classes.map(fmtClass).join('، '))})</span>: ${x.names.length ? esc(x.names.join('، ')) : 'ما في حدا فاضي'}</li>`).join('')}</ul></section>`;
+}
+
 function classTable(r) {
   const L = Math.max(r.L, 1);
   const classes = [...new Set([...r.placed, ...r.cancelled].map(x => x.c))]
@@ -438,10 +468,10 @@ function classTable(r) {
   for (const c of classes) {
     rows += `<tr><th>${esc(fmtClass(c))}</th>`;
     const mine = r.placed.filter(x => x.c === c);
-    const last = Math.max(0, ...mine.map(x => x.p));
+    const gaps = gapPeriods(r, c);
     for (let p = 1; p <= L; p++) {
       const x = mine.find(y => y.p === p);
-      rows += !x && r.full.has(c) && p < last ? '<td class="gap"><span>إشغال</span></td>' : cellHTML(x, { byClass: true });
+      rows += gaps.includes(p) ? '<td class="gap"><span>إشغال</span></td>' : cellHTML(x, { byClass: true });
     }
     rows += '</tr>';
   }
@@ -457,7 +487,8 @@ async function drawImage(r, mode) {
     : dayTeachers();
   const L = Math.max(r.L, 1);
   const S = 2, nameW = 150, colW = 128, rowH = 74, headH = 54, top = 118, pad = 28;
-  const W = pad * 2 + nameW + colW * L, H = top + headH + rowH * rows.length + pad;
+  const free = freeList(r);
+  const W = pad * 2 + nameW + colW * L, H = top + headH + rowH * rows.length + pad + (free.length ? 56 + 34 * free.length : 0);
   const cv = document.createElement('canvas');
   cv.width = W * S; cv.height = H * S;
   const g = cv.getContext('2d');
@@ -484,13 +515,13 @@ async function drawImage(r, mode) {
     if (off) { g.textAlign = 'center'; g.font = F(700, 18); g.fillText('غائب', (pad + colX(0)) / 2, y + rowH / 2 + 6); }
     else {
       const mine = r.placed.filter(l => (byClass ? l.c : l.t) === row);
-      const last = Math.max(0, ...mine.map(l => l.p));
+      const gaps = byClass ? gapPeriods(r, row) : [];
       for (let p = 1; p <= L; p++) {
         const x = mine.find(l => l.p === p);
         const cx = colX(p) + colW / 2;
         g.textAlign = 'center';
         if (!x) {
-          if (byClass && r.full.has(row) && p < last) {
+          if (gaps.includes(p)) {
             g.fillStyle = '#fbe3de'; g.fillRect(colX(p) + 1, y + 1, colW - 2, rowH - 2);
             g.fillStyle = '#d2452f'; g.font = F(700, 18); g.fillText('إشغال', cx, y + rowH / 2 + 6);
           }
@@ -509,6 +540,18 @@ async function drawImage(r, mode) {
   g.strokeStyle = '#c9d6d1';
   g.strokeRect(pad, top, W - pad * 2, bottom - top);
   for (let p = 0; p <= L; p++) { g.beginPath(); g.moveTo(colX(p), top); g.lineTo(colX(p), bottom); g.stroke(); }
+  if (free.length) {
+    g.textAlign = 'right'; g.fillStyle = '#11221d'; g.font = F(700, 22);
+    g.fillText('المعلمين المتفرغين للإشغال', W - pad, bottom + 44);
+    free.forEach((f, i) => {
+      const y = bottom + 44 + 34 * (i + 1);
+      g.fillStyle = '#d2452f'; g.font = F(700, 19);
+      const head = `الحصة ${AR(f.p)} (إشغال ${f.classes.map(fmtClass).join('، ')}): `;
+      g.fillText(head, W - pad, y);
+      g.fillStyle = '#11221d'; g.font = F(500, 19);
+      g.fillText(f.names.length ? f.names.join('، ') : 'ما في حدا فاضي', W - pad - g.measureText(head).width, y);
+    });
+  }
   return new Promise(res => cv.toBlob(res, 'image/png'));
 }
 
@@ -567,6 +610,7 @@ function resultsHTML() {
     <div class="row"><button class="go small" data-share="teachers">مشاركة جدول المعلمين</button><button class="go small" data-share="classes">مشاركة جدول الصفوف</button></div>
   </div>
   ${body}
+  ${freeHTML(r)}
   <div class="legend"><span style="--c:var(--absent-soft)">معلم غائب</span></div>`;
 }
 
