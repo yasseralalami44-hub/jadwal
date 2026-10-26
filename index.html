@@ -105,6 +105,31 @@ td.gap{background:var(--absent-soft);color:var(--absent);font-weight:700;font-si
 .tcard .arrow{color:var(--moved);font-weight:700}
 .tcard.cancel{border-color:var(--absent)}
 .muted{color:var(--muted)}
+td.cover{background:var(--absent-soft)}
+td.cover .c,td.cover .s{color:var(--absent)}
+td.gap.done .s{color:var(--fg);font-weight:700}
+.cov-row{display:grid;gap:8px;padding:10px 0;border-top:1px solid var(--line)}
+.cov-head{font-weight:500}
+.cov-head b{color:var(--absent)}
+.picks{display:flex;flex-wrap:wrap;gap:8px}
+.pick{display:flex;align-items:center;gap:8px;border:1.5px solid var(--line);border-radius:10px;padding:7px 10px;cursor:pointer;background:var(--surface)}
+.pick input{width:18px;height:18px;accent-color:var(--accent)}
+.pick span{display:grid;line-height:1.25}
+.pick small{color:var(--muted);font-size:.74rem}
+.pick.on{border-color:var(--ok);background:var(--ok-soft)}
+.pick.off{opacity:.45;cursor:default}
+#print-area{display:none}
+@media print{
+  body.printing #app>*:not(#print-area){display:none!important}
+  body.printing #print-area{display:block}
+  #print-area h2{font-family:var(--display);font-weight:400;margin:0 0 4px}
+  #print-area p{margin:0 0 8px;color:#555}
+  #print-area .pb{break-before:page}
+  #print-area .scroller{overflow:visible;border:0}
+  #print-area table.tt{min-width:0;font-size:11px}
+  #print-area .tt th,#print-area .tt td{padding:3px}
+  #print-area .tt tbody th{position:static}
+}
 .free{margin:0;padding:0;list-style:none;display:grid;gap:6px}
 .free b{color:var(--absent)}
 .note{font-size:.85rem;color:var(--muted);margin:0;max-width:75ch}
@@ -423,7 +448,7 @@ function improveOrder(res, anchorN) {
   // per period, and each period a lesson moved from its own 1 (the timetable stays close to the original)
   // an إشغال costs 300, and more the earlier it is in the day (the students' first periods come first)
   const gapCost = () => classes.reduce((s, c) => s + gapPeriods(res, c).reduce((a, p) => a + 300 + 10 * (7 - p), 0), 0);
-  const score = () => 1000 * idleRuns() + gapCost() + classes.reduce((s, c) => s + 20 * pairs(c), 0) + 15 * earlyPE() +
+  const score = () => 1000 * idleRuns() + gapCost() + classes.reduce((s, c) => s + 20 * pairs(c), 0) + 120 * earlyPE() +
     placed.reduce((s, x) => s + (res.full.has(x.c) ? Math.abs(x.p - x.orig) : 0), 0);
   // nothing new goes into period 7, except احمد's PE (2026-10-26)
   const canGo = (x, p) => !x.fixed && (p <= 6 || x.orig === 7 || (x.t === MOVABLE && LIGHT.has(x.s))) &&
@@ -559,9 +584,10 @@ function gapPeriods(res, c) {
   const lastCore = Math.max(0, ...mine.filter(x => !NONCORE.has(x.s)).map(x => x.p));
   const last = Math.max(0, ...mine.map(x => x.p));
   const out = [];
-  // before a core lesson: always إشغال; before only PE/art/vocational: إشغال up to period 5 (2026-10-26),
-  // period 6 stays blank
-  for (let p = 1; p < last; p++) if (!mine.some(x => x.p === p) && (p < lastCore || p <= 5)) out.push(p);
+  // every empty period up to 5 is إشغال (the students' day is at least 5 periods); after that only when a
+  // core lesson still comes later (2026-10-27)
+  for (let p = 1; p <= Math.max(5, last - 1); p++)
+    if (!mine.some(x => x.p === p) && (p <= 5 || p < lastCore)) out.push(p);
   return out;
 }
 function countGaps(res) {
@@ -620,6 +646,8 @@ function toast(msg) {
 
 // The arrangement runs in a background worker so the page stays responsive while it searches (up to ~5 min).
 let solverWorker = null, startedAt = 0, ticker = null;
+// who covers each إشغال: key 'class|period' -> teacher (draft while choosing, result.cover once saved)
+let draftCover = {};
 function newWorker() {
   try {
     const src = document.getElementById('app-main').textContent.split('if (typeof module')[0];
@@ -635,7 +663,7 @@ function run() {
     const el = document.getElementById('elapsed');
     if (el) el.textContent = AR(Math.round((Date.now() - startedAt) / 1000));
   }, 1000);
-  const done = res => { clearInterval(ticker); solverWorker = null; result = res; busy = false; render(); };
+  const done = res => { clearInterval(ticker); solverWorker = null; result = res; result.cover = {}; draftCover = {}; busy = false; render(); };
   const w = newWorker();
   if (!w) { setTimeout(() => done(solveDay(DATA, ui.day, new Set(ui.absent))), 30); return; }
   solverWorker = w;
@@ -665,7 +693,12 @@ function teacherTable(r) {
   for (const t of dayTeachers()) {
     const off = ui.absent.includes(t);
     rows += `<tr class="${off ? 'off' : ''}"><th>${esc(t)}${off ? ' <small>· غائب</small>' : ''}</th>`;
-    for (let p = 1; p <= L; p++) rows += off ? '<td></td>' : cellHTML(r.placed.find(x => x.t === t && x.p === p), {});
+    for (let p = 1; p <= L; p++) {
+      if (off) { rows += '<td></td>'; continue; }
+      const x = r.placed.find(y => y.t === t && y.p === p);
+      const cov = !x && coverOf(r, t, p);
+      rows += cov ? `<td class="cover"><div class="cell"><span class="c">${esc(fmtClass(cov))}</span><span class="s">إشغال</span></div></td>` : cellHTML(x, {});
+    }
     rows += '</tr>';
   }
   return `<div class="scroller"><table class="tt"><thead>${headRow(L, 'المعلم')}</thead><tbody>${rows}</tbody></table></div>`;
@@ -683,11 +716,30 @@ function freeList(r) {
   }
   return out;
 }
+// the class a teacher covers at period p (saved choices only), or ''
+function coverOf(r, t, p) {
+  const k = Object.keys(r.cover || {}).find(key => r.cover[key] === t && key.endsWith('|' + p));
+  return k ? k.split('|')[0] : '';
+}
+// lessons a teacher has today: own lessons + إشغال chosen for them
+function loadOf(r, t, cover) {
+  return r.placed.filter(x => x.t === t).length + Object.values(cover).filter(v => v === t).length;
+}
 function freeHTML(r) {
   const f = freeList(r);
   if (!f.length) return '';
-  return `<section class="panel"><div class="label">المعلمين المتفرغين للإشغال</div><ul class="free">${f.map(x =>
-    `<li><b>الحصة ${AR(x.p)}</b> <span class="muted">(إشغال ${esc(x.classes.map(fmtClass).join('، '))})</span>: ${x.names.length ? esc(x.names.join('، ')) : 'ما في حدا فاضي'}</li>`).join('')}</ul></section>`;
+  const rowsHtml = f.map(x => x.classes.map(c => {
+    const key = c + '|' + x.p;
+    const picks = x.names.map(t => {
+      const takenElsewhere = Object.entries(draftCover).some(([k, v]) => v === t && k !== key && k.endsWith('|' + x.p));
+      const on = draftCover[key] === t;
+      return `<label class="pick${on ? ' on' : ''}${takenElsewhere ? ' off' : ''}"><input type="checkbox" data-cover="${esc(key)}" value="${esc(t)}" ${on ? 'checked' : ''} ${takenElsewhere ? 'disabled' : ''}><span><b>${esc(t)}</b><small>${AR(loadOf(r, t, draftCover))} حصص اليوم</small></span></label>`;
+    }).join('');
+    return `<div class="cov-row"><div class="cov-head">الحصة ${AR(x.p)} · إشغال <b>${esc(fmtClass(c))}</b>${(r.cover || {})[key] ? ` <span class="muted">(محفوظ: ${esc(r.cover[key])})</span>` : ''}</div><div class="picks">${picks || '<span class="muted">ما في حدا فاضي</span>'}</div></div>`;
+  }).join('')).join('');
+  const dirty = JSON.stringify(draftCover) !== JSON.stringify(r.cover || {});
+  return `<section class="panel"><div class="label">مين بيغطّي الإشغال؟ اختار معلم لكل إشغال واعمل حفظ</div>${rowsHtml}
+    <div class="row"><button class="go small" id="save-cover" ${dirty ? '' : 'disabled'}>حفظ الإشغال</button><button class="ghost" id="clear-cover">مسح الاختيارات</button></div></section>`;
 }
 
 function classTable(r) {
@@ -701,7 +753,8 @@ function classTable(r) {
     const gaps = gapPeriods(r, c);
     for (let p = 1; p <= L; p++) {
       const x = mine.find(y => y.p === p);
-      rows += gaps.includes(p) ? '<td class="gap"><span>إشغال</span></td>' : cellHTML(x, { byClass: true });
+      const who = (r.cover || {})[c + '|' + p];
+      rows += gaps.includes(p) ? `<td class="gap${who ? ' done' : ''}"><div class="cell"><span class="c">إشغال</span>${who ? `<span class="s">${esc(who)}</span>` : ''}</div></td>` : cellHTML(x, { byClass: true });
     }
     rows += '</tr>';
   }
@@ -751,9 +804,14 @@ async function drawImage(r, mode) {
         const cx = colX(p) + colW / 2;
         g.textAlign = 'center';
         if (!x) {
-          if (gaps.includes(p)) {
+          const who = byClass ? (r.cover || {})[row + '|' + p] : null;
+          const cov = !byClass && coverOf(r, row, p);
+          if (gaps.includes(p) || cov) {
             g.fillStyle = '#fbe3de'; g.fillRect(colX(p) + 1, y + 1, colW - 2, rowH - 2);
-            g.fillStyle = '#d2452f'; g.font = F(700, 18); g.fillText('إشغال', cx, y + rowH / 2 + 6);
+            g.fillStyle = '#d2452f'; g.font = F(700, cov ? 24 : 18);
+            if (cov) { g.fillText(fmtClass(cov), cx, y + 36); g.font = F(500, 15); g.fillText('إشغال', cx, y + 58); }
+            else if (who) { g.fillText('إشغال', cx, y + 32); g.fillStyle = '#11221d'; g.font = F(700, 17); g.fillText(who, cx, y + 56); }
+            else g.fillText('إشغال', cx, y + rowH / 2 + 6);
           }
           continue;
         }
@@ -814,6 +872,37 @@ async function saveShare() {
   try { await downloads.save({ filename: name, data: shareBlob }); toast('جاهزة: ابعتها على جروب الواتساب'); }
   catch (err) { if (err?.code !== 'declined') toast('اضغط مطوّلًا على الصورة واختار حفظ أو مشاركة'); }
 }
+// both tables at once: the phone's share sheet when it takes two files, otherwise two downloads
+async function saveBoth() {
+  const day = DAYS[ui.day];
+  const files = [
+    new File([await drawImage(result, 'teachers')], `جدول-المعلمين-${day}.png`, { type: 'image/png' }),
+    new File([await drawImage(result, 'classes')], `جدول-الصفوف-${day}.png`, { type: 'image/png' }),
+  ];
+  if (navigator.canShare && navigator.canShare({ files })) {
+    try { await navigator.share({ files, title: 'جدول التعويض' }); return; }
+    catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  for (const f of files) {
+    const u = URL.createObjectURL(f), a = document.createElement('a');
+    a.href = u; a.download = f.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(u), 4000);
+  }
+  toast('انحفظ الجدولين');
+}
+// both tables on paper: one print, teachers then classes on a new page
+function printBoth() {
+  const area = document.getElementById('print-area');
+  const day = DAYS[ui.day];
+  const abs = ui.absent.length ? `الغياب: ${esc(ui.absent.join('، '))}` : 'ما في غياب';
+  area.innerHTML = `<h2>جدول المعلمين · ${day}</h2><p>${abs}</p>${teacherTable(result)}
+    <h2 class="pb">جدول الصفوف · ${day}</h2><p>${abs}</p>${classTable(result)}`;
+  document.body.classList.add('printing');
+  const done = () => { document.body.classList.remove('printing'); window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  window.print();
+  setTimeout(done, 1500);
+}
 async function copyShare() {
   try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': shareBlob })]); toast('نسخت الصورة: الصقها بجروب الواتساب'); }
   catch (e) { toast('النسخ مش مدعوم هون: اضغط "حفظ ومشاركة"'); }
@@ -837,7 +926,7 @@ function resultsHTML() {
   ${r.short ? `<p class="note">اليوم عدد الصفوف أكثر من المعلمين الحاضرين اللي بيعلّموها، فمستحيل كل صف يكون معه معلم بكل حصة مهما رتبنا. رتبتها بأقل عدد إشغال ممكن (${AR(r.gaps)})، وأبعدتها لآخر اليوم قد ما بقدر. ما انلغت ولا حصة.</p>` : ''}
   <div class="row" style="justify-content:space-between">
     <div class="tabs" role="group" aria-label="طريقة العرض">${Object.entries(views).map(([k, v]) => `<button data-view="${k}" aria-pressed="${ui.view === k}">${v}</button>`).join('')}</div>
-    <div class="row"><button class="go small" data-share="teachers">مشاركة جدول المعلمين</button><button class="go small" data-share="classes">مشاركة جدول الصفوف</button></div>
+    <div class="row"><button class="go small" id="save-both">حفظ الجدولين</button><button class="go small" id="print-both">طباعة الجدولين</button><button class="ghost" data-share="teachers">مشاركة جدول المعلمين</button><button class="ghost" data-share="classes">مشاركة جدول الصفوف</button></div>
   </div>
   ${body}
   ${freeHTML(r)}
@@ -928,6 +1017,7 @@ function render() {
     </div>
   </header>
   ${tab === 'plan' ? plannerHTML() + resultsHTML() : editorHTML()}
+  <div id="print-area"></div>
   <div class="share-back" id="share" hidden>
     <div class="share-box" role="dialog" aria-label="مشاركة كصورة">
       <img alt="صورة جدول التعويض">
@@ -953,6 +1043,10 @@ document.addEventListener('click', e => {
   if (b.id === 'go') { run(); return; }
   if (b.id === 'clear') { ui.absent = []; saveUi(); run(); return; }
   if (b.dataset.share) { openShare(b.dataset.share); return; }
+  if (b.id === 'save-cover') { result.cover = { ...draftCover }; toast('انحفظ الإشغال على الجدولين'); render(); return; }
+  if (b.id === 'clear-cover') { draftCover = {}; render(); return; }
+  if (b.id === 'save-both') { saveBoth(); return; }
+  if (b.id === 'print-both') { printBoth(); return; }
   if (b.id === 'share-save') { saveShare(); return; }
   if (b.id === 'share-copy') { copyShare(); return; }
   if (b.id === 'share-close') { document.getElementById('share').hidden = true; return; }
@@ -960,6 +1054,10 @@ document.addEventListener('click', e => {
   if (b.id === 'save') { saveTimetable(); return; }
 });
 document.addEventListener('change', e => {
+  const k = e.target.dataset && e.target.dataset.cover;
+  if (!k) return;
+  if (e.target.checked) draftCover[k] = e.target.value; else delete draftCover[k];
+  render();
 });
 document.addEventListener('input', e => {
   if (!e.target.dataset.et) return;
